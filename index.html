@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AI Markdown → Word Converter v34</title>
+<title>AI Markdown → Word Converter v35</title>
 
 <!-- MathJax renders LaTeX equations in the preview. -->
 <script>
@@ -118,7 +118,7 @@ textarea{
 
 <body>
 <div class="topbar">
-  <strong>AI Markdown → Word v34</strong>
+  <strong>AI Markdown → Word v35</strong>
   <button onclick="convertMarkdown()">Convert</button>
   <button class="green" onclick="downloadWord()">Download Word</button>
   <button class="secondary" onclick="copyForWord()">Copy for Word</button>
@@ -164,7 +164,7 @@ textarea{
       <div class="panel-title">Paste AI Markdown</div>
       <textarea id="markdown" placeholder="Paste your entire AI response here...
 
-Paste raw ChatGPT text or Markdown.
+Paste raw Markdown, LaTeX, or text copied from ChatGPT desktop/web.
 Supports:
 # Headings
 **bold** and *italic*
@@ -188,7 +188,7 @@ $$ display equations $$
   </div>
   <div class="help">
     <strong>Tip:</strong> Choose <strong>2 columns</strong> before downloading if you want a two-column study handout.
-    The preview pane is a dedicated, touch-scrollable area with its own vertical and horizontal scrollbars, so you can move through the paper stack without scrolling the whole webpage. Long equations and wide tables can scroll horizontally instead of being clipped. Double-escaped outer math delimiters are normalized without changing matrix row separators. Hyperbolic secant/cosecant commands (\sech and \csch) are defined for MathJax. Tables split only at actual Markdown separators, not at absolute-value bars inside formulas such as \|x\|. Matrix row separators are preserved. The Word export embeds rendered equations.
+    The preview pane is a dedicated, touch-scrollable area with its own vertical and horizontal scrollbars, so you can move through the paper stack without scrolling the whole webpage. Long equations and wide tables can scroll horizontally instead of being clipped. Supports both raw Markdown and ChatGPT-rendered/copied text when the clipboard retains the LaTeX. Bare equation lines such as \lim..., \frac..., and lines ending in \boxed{...} are detected and rendered. Double-escaped delimiters and commands are normalized carefully; matrix row separators are preserved. Hyperbolic commands \sech and \csch are defined. The Word export embeds rendered equations.
   </div>
 </div>
 
@@ -279,31 +279,31 @@ function normalizeTex(tex){
 // On iPad this is especially common when text is copied from an AI answer. Detect
 // obvious standalone LaTeX lines and render them as equations automatically.
 function looksLikeBareLatex(line){
-  const s=line.trim();
-  if(!s || s.startsWith('#') || s.startsWith('>') || /^[-*+]\s/.test(s) || /^\d+[.)]\s/.test(s)) return false;
-  // Do not mistake reference filenames for equations. For example,
-  // `Module_1_CO1-2\_ Stoichiometry(2).pdf` contains underscores, hyphens,
-  // and parentheses but is plain text. Wrapping it in math triggers MathJax's
-  // misleading "Double subscripts" warning.
+  const s=String(line).trim();
+  if(!s || s.startsWith('#') || s.startsWith('>') || /^[-*+]	/.test(s) || /^\d+[.)]\s/.test(s)) return false;
   if (/(?:^|\s)[^\s]+\.(?:pdf|docx?|pptx?|xlsx?|html?|txt|csv)(?:\s|$)/i.test(s)) return false;
-  // If explicit math delimiters are present, let inlineMarkdown handle them.
-  // Wrapping these lines again creates nested delimiters and visible stray \] text.
+  // Explicit delimiters are handled by inlineMarkdown/the display-math reader.
   if(s.includes('\\[') || s.includes('\\\\[') || s.includes('\\]') || s.includes('\\\\]') || s.includes('\\(') || s.includes('\\\\(') || s.includes('\\)') || s.includes('\\\\)') || s.includes('$')) return false;
-  // Never treat ordinary prose containing a LaTeX command as a standalone equation.
-  if(/[A-Za-z]{3,}\s+[A-Za-z]{2,}/.test(s) && !/^\\(?:boxed|frac|sqrt|begin|sum|int)\b/.test(s)) return false;
-  if(/^\\(?:pm|mp|sqrt|frac|boxed|text|times|cdot|div|leq|geq|neq|approx|pi|theta|alpha|beta|gamma|Delta|sum|int|infty|Rightarrow|left|right|begin|end)\b/.test(s)) return true;
+  // A standalone equation may begin with an operator (for example, =18-15+1\\boxed{4})
+  // or a command that ChatGPT copied without surrounding math delimiters.
+  const commandLine=/^(?:[=+\-*/()]\s*)?(?:\\\\?)(?:lim|frac|dfrac|tfrac|sqrt|boxed|begin|sum|int|sin|cos|tan|cot|sec|csc|sinh|cosh|tanh|coth|sech|csch|ln|log|exp|left|right|mathrm|mathbf|mathbb|text|displaystyle|partial|infty|pi|theta|alpha|beta|gamma|Delta|Rightarrow|to|cdot|times|leq|geq|neq|approx|in|notin|overline|underline)\b/.test(s);
+  const hasTexCommand=/(?:^|[^A-Za-z])\\\\?(?:boxed|frac|dfrac|tfrac|sqrt|lim|begin|sin|cos|tan|cot|sec|csc|sinh|cosh|tanh|coth|sech|csch|ln|log|mathrm|mathbf|mathbb|text|infty|pi|theta|alpha|beta|gamma|Delta|Rightarrow|cdot|times|leq|geq|neq|approx)\b/.test(s);
+  const equationShape=/[=+*/^_{}]|\\\\?\\\\(?:to|rightarrow|infty)/.test(s);
+  // Do not turn explanatory prose into equations just because it mentions a command.
+  if(commandLine) return true;
+  if(hasTexCommand && equationShape && !/[A-Za-z]{3,}\s+[A-Za-z]{2,}/.test(s)) return true;
   if(/\^\{[^}]+\}|_[{][^}]+[}]|\^[A-Za-z0-9]|_[A-Za-z0-9]/.test(s) && /[=+\-*/()]/.test(s) && !/[A-Za-z]{3,}\s+[A-Za-z]{2,}/.test(s)) return true;
   return false;
 }
 
 function bareLatexHtml(line){
-  const tex=line.trim();
-  // boxed expressions and other clearly equation-like lines are display equations.
-  const display=/\\(?:boxed|begin|sum|int|frac)\b/.test(tex) || tex.length>45;
+  // Bare TeX from ChatGPT clipboard often has doubled command slashes but no
+  // surrounding $...$ or \\[...\\]. Normalize it before MathJax sees it.
+  let tex=normalizeTex(String(line).trim());
+  // Add a visual separation when a boxed answer was copied immediately after a term.
+  tex=tex.replace(/([^\s])\\boxed\{/g,'$1 \\boxed{');
   const x=escapeHtml(tex);
-  return display
-    ? `<div class="math-display">\\[${x}\\]</div>`
-    : `<div class="math-display">\\[${x}\\]</div>`;
+  return `<div class="math-display">\\[${x}\\]</div>`;
 }
 
 function inlineMarkdown(text){
@@ -355,6 +355,7 @@ function inlineMarkdown(text){
   });
   return text;
 }
+
 
 function splitMarkdownTableCells(row){
   // Split a Markdown table row only at structural pipes. Pipes used inside TeX,
@@ -448,8 +449,9 @@ function convertMarkdown(){
     if(!line.trim()){i++;continue;}
 
     let normalized=normalizeMath(line).trim();
-    if(looksLikeBareLatex(normalized)){
-      html+=bareLatexHtml(normalized);
+    const bareCandidate=normalizeTex(normalized);
+    if(looksLikeBareLatex(bareCandidate)){
+      html+=bareLatexHtml(bareCandidate);
       i++;
       continue;
     }
