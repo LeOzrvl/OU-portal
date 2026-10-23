@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AI Markdown → Word Converter v35</title>
+<title>AI Markdown → Word Converter v37</title>
 
 <!-- MathJax renders LaTeX equations in the preview. -->
 <script>
@@ -88,10 +88,12 @@ textarea{
 .page p,.page li,.page blockquote{min-width:0;overflow-wrap:break-word;}
 .page mjx-container{font-size:90% !important}
 .math-inline{white-space:normal;max-width:100%;}
+.raw-math-fallback{white-space:pre-wrap;overflow-wrap:anywhere;background:#f8f9fa;border-left:3px solid #9aa0a6;padding:6px 9px;color:#555;font:10pt/1.4 Consolas,monospace;}
 .answer-blank{display:inline-block;min-width:7em;border-bottom:1px solid #777;height:.9em;vertical-align:baseline;margin:0 .12em}
 .page img{max-width:100%}
 .page-column > :first-child{margin-top:0}
 .page a{color:#1a73e8}
+.compat-note{display:none;margin:0 18px 10px;padding:9px 11px;border-left:3px solid #9aa0a6;background:#f8f9fa;color:#4d5156;font-size:12px;line-height:1.45}
 .help{margin-top:14px;background:#fff;border:1px solid #d9dde3;border-radius:9px;padding:12px 14px;font-size:13px;line-height:1.5;color:#4d5156}
 @media(max-width:950px){
   .layout{grid-template-columns:minmax(0,1fr)}
@@ -118,7 +120,7 @@ textarea{
 
 <body>
 <div class="topbar">
-  <strong>AI Markdown → Word v35</strong>
+  <strong>AI Markdown → Word v36</strong>
   <button onclick="convertMarkdown()">Convert</button>
   <button class="green" onclick="downloadWord()">Download Word</button>
   <button class="secondary" onclick="copyForWord()">Copy for Word</button>
@@ -179,6 +181,7 @@ $$ display equations $$
 
     <section class="panel">
       <div class="panel-title">Live Word-Style Preview</div>
+      <div id="compatNote" class="compat-note" aria-live="polite"></div>
       <div class="preview-wrap">
         <main id="preview" class="preview-pages">
           <p style="color:#777">Paste Markdown on the left.</p>
@@ -188,7 +191,7 @@ $$ display equations $$
   </div>
   <div class="help">
     <strong>Tip:</strong> Choose <strong>2 columns</strong> before downloading if you want a two-column study handout.
-    The preview pane is a dedicated, touch-scrollable area with its own vertical and horizontal scrollbars, so you can move through the paper stack without scrolling the whole webpage. Long equations and wide tables can scroll horizontally instead of being clipped. Supports both raw Markdown and ChatGPT-rendered/copied text when the clipboard retains the LaTeX. Bare equation lines such as \lim..., \frac..., and lines ending in \boxed{...} are detected and rendered. Double-escaped delimiters and commands are normalized carefully; matrix row separators are preserved. Hyperbolic commands \sech and \csch are defined. The Word export embeds rendered equations.
+    The preview pane is a dedicated, touch-scrollable area with its own vertical and horizontal scrollbars, so you can move through the paper stack without scrolling the whole webpage. Long equations and wide tables can scroll horizontally instead of being clipped. Supports both desktop/raw Markdown and iOS/plain-text ChatGPT copies. In iOS mode, recognizable unwrapped TeX lines and multiline cases/matrix environments are rendered as equations, headings are restored, and the Module map table is reconstructed when all cell text remains. The copy action can omit formula contents entirely; those missing contents cannot be recovered from the pasted text. Bare equation lines such as \lim..., \frac..., and lines ending in \boxed{...} are detected and rendered. Double-escaped delimiters and commands are normalized carefully; malformed fractions and unmatched scalable delimiters are repaired before MathJax rendering; matrix row separators are preserved. Hyperbolic commands \sech and \csch are defined. The Word export embeds rendered equations.
   </div>
 </div>
 
@@ -209,6 +212,8 @@ const PAPER_SIZES={
 let currentSpacing=1.5;
 let currentTextSize=10.5;
 let renderedHTML='';
+let plainIOSCopyMode=false;
+let iosMissingContentLikely=false;
 
 function escapeHtml(s){
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
@@ -231,48 +236,160 @@ function decodeCopiedEntities(s){
 }
 
 function normalizeMath(s){
-  // Only normalize copied outer delimiters here. Never globally collapse slashes:
-  // `\\` is a meaningful row separator inside matrix/aligned environments.
+  // Normalize 2+ copied backslashes before OUTER math delimiters only. Do not
+  // collapse backslashes generally: inside TeX, \\ can separate matrix rows.
   const bs=String.fromCharCode(92);
-  return String(s).replace(/\\\\([\[\]\(\)])/g,(_,d)=>bs+d);
+  return String(s).replace(/\\{2,}([\[\]\(\)])/g,(_,d)=>bs+d);
 }
 
 function normalizeTex(tex){
-  // Fix copy/paste escaping inside a protected math expression while preserving
-  // actual row separators in matrix/aligned/cases environments.
-  const envRe=/\\begin\{(matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|smallmatrix|aligned|align|cases|array)\}([\s\S]*?)\\end\{\1\}/g;
-  const known=/^(?:frac|dfrac|tfrac|sqrt|mathrm|mathbf|mathbb|text|textbf|textit|cdot|times|left|right|begin|end|boxed|quad|qquad|ne|neq|geq|leq|implies|Rightarrow|Delta|alpha|beta|theta|sum|int|ln|log|exp|sin|cos|tan|lim|overline|underline|pm|mp|div|circ|infty|operatorname|displaystyle|prod|partial|nabla|ell|Omega|omega|mu|sigma|pi|rightarrow|to|in|notin|approx|equiv|cdots|ldots|%|_|\{|\})/;
+  // Normalize a single protected formula. If an environment is present, save
+  // its row breaks before cleaning escape artefacts from the rest of the TeX.
+  const envRe=/\\begin\{(matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|smallmatrix|aligned|align|cases|array|gathered|split)\}([\s\S]*?)\\end\{\1\}/g;
   const rows=[];
   tex=String(tex).replace(envRe,(whole,name,body)=>{
-    // Protect row separators; a third slash before a row entry is a copy artifact.
+    // iOS/clipboard occasionally adds a third slash before a row's first token.
     body=body.replace(/\\\\\\(?=\s*(?:[-+]?\d|[A-Za-z]))/g,'\\\\');
     body=body.replace(/\\\\/g,()=>{const id=rows.length;rows.push('\\\\');return `@@TEXROW${id}@@`;});
     return `\\begin{${name}}${body}\\end{${name}}`;
   });
-  // Outside environments, doubled slashes are not row breaks in these source files.
-  // Collapse repeated slashes and repair escaped Markdown punctuation/subscripts.
+  // TeX has no meaning for a pasted display opener \\[ inside \boxed{...};
+  // it is intended to be an ordinary square bracket in this iOS-copy pattern.
+  tex=tex.replace(/\\boxed\{\s*\\\[/g,'\\boxed{[');
+  tex=tex.replace(/\\\](?=\s*\})/g,']');
+  // In iOS copied plain text, commands can be double-escaped while underscores
+  // may separately have a Markdown escape. Collapse repeated slashes only after
+  // preserving row separators and only within math content.
   tex=tex.replace(/\\{2,}/g,'\\');
+  // Repair iOS flattening that drops the delimiter after \left or \right.
+  const bsChar=String.fromCharCode(92);
+  tex=tex.replace(/\\left[\\](?=(?:ln|frac|dfrac|tfrac|sqrt|mathrm|text|sin|cos|tan|sinh|cosh|tanh|coth|sech|csch|log|exp))/g,()=>bsChar+'left('+bsChar);
+  tex=tex.replace(/\\left(?=[0-9])/g,'\\left[');
+  // Preserve valid invisible delimiters such as \right.; do not rewrite them as brackets.
   tex=tex.replace(/\\(?=\s*[<>=])/g,'');
   tex=tex.replace(/\\([0-9])/g,'$1');
-  // Preserve unknown LaTeX commands. Stripping their backslash corrupts valid commands
-  // such as \hspace, \vspace, \kern, and package-specific macros.
-  // Underscores escaped for Markdown must become TeX subscripts; keep \%, \{, \, as valid TeX commands.
+  // Markdown-escaped underscores inside math become normal TeX subscripts.
   tex=tex.replace(/\\_/g,'_');
-  // Repair duplicate scripts on a single symbol. Some ChatGPT copies produce
-  // H_f^\circ_{\mathrm{rxn}}; TeX sees two subscripts on H. Combine the labels
-  // into one subscript while preserving the superscript. Nested \mathrm{...}
-  // is handled explicitly because a simple [^{}]+ pattern cannot match it.
+  // Repair common duplicate-subscript forms (for example H_f^\circ_{\mathrm{rxn}})
+  // without rewriting already-correct forms like H_2O, t_{1/2}, or [A]_t.
   tex=tex.replace(/([A-Za-z])_([A-Za-z0-9]+)\^\{([^{}]+)\}_\{\\mathrm\{([^{}]+)\}\}/g, '$1_{$2,\\mathrm{$4}}^{$3}');
   tex=tex.replace(/([A-Za-z])_\{([^{}]+)\}\^\{([^{}]+)\}_\{([^{}]+)\}/g, '$1_{$2,$4}^{$3}');
   tex=tex.replace(/([A-Za-z])_([A-Za-z0-9]+)(\^\{[^{}]+\})_\{([^{}]+)\}/g, '$1_{$2,$4}$3');
   tex=tex.replace(/([A-Za-z])_([A-Za-z0-9]+)(\^[A-Za-z0-9])_\{([^{}]+)\}/g, '$1_{$2,$4}$3');
-  // Repair a repeated unbraced subscript (x_i_j) without altering separate
-  // subscripts belonging to different bases.
   tex=tex.replace(/([A-Za-z\]\)])_([A-Za-z0-9]+)_([A-Za-z0-9]+)/g, '$1_{$2,$3}');
-  // Do not rewrite ordinary single subscripts: H_2O, [A]_t, and t_{1/2} stay intact.
-  // Restore genuine row separators after all other slash normalization.
-  tex=tex.replace(/@@TEXROW(\d+)@@/g,(_,n)=>rows[Number(n)]||'\\\\');
+  // Repair malformed scalable delimiters commonly damaged by iOS clipboard copy.
+  // For example, `\\left\\[...\\right\\]^n` should use real square delimiters,
+  // while `\\left\\frac...\\right` has lost its opening/closing delimiter.
+  tex=tex.replace(/\\left\\\\\[/g,'\\left[').replace(/\\right\\\\\]/g,'\\right]');
+  tex=tex.replace(/\\left(?=\s*\\(?:frac|dfrac|tfrac|ln|log|sin|cos|tan|sinh|cosh|tanh|coth|sech|csch|sqrt|lim|sum|int|mathrm|text|operatorname|begin)\b)/g,'\\left(');
+  tex=tex.replace(/\\right(?=\s*$)/g,'\\right)');
+  // If left/right are unbalanced, drop only the sizing commands, preserving
+  // their actual brackets and expression instead of showing a MathJax warning.
+  const leftCount=(tex.match(/\\left\b/g)||[]).length;
+  const rightCount=(tex.match(/\\right\b/g)||[]).length;
+  if(leftCount!==rightCount) tex=tex.replace(/\\left\b|\\right\b/g,'');
+
+  // Check fraction commands for missing arguments. Compact forms such as \\frac3x
+  // are valid TeX, so accept braced groups, one-character tokens, or commands.
+  const fracCommands=[...tex.matchAll(/\\(dfrac|tfrac|frac)\b/g)].reverse();
+  for(const m of fracCommands){
+    const start=m.index, after=start+m[0].length;
+    function argumentEnd(pos){
+      while(pos<tex.length && /\s/.test(tex[pos])) pos++;
+      if(pos>=tex.length) return -1;
+      if(tex[pos]==='{'){
+        let depth=0, escaped=false;
+        for(let k=pos;k<tex.length;k++){
+          if(tex[k]==='\\\\' && !escaped){escaped=true;continue;}
+          if(tex[k]==='{' && !escaped) depth++;
+          else if(tex[k]==='}' && !escaped){depth--;if(depth===0)return k+1;}
+          escaped=false;
+        }
+        return -1;
+      }
+      if(tex[pos]==='\\\\'){
+        let k=pos+1;
+        if(k>=tex.length)return -1;
+        if(/[A-Za-z]/.test(tex[k])){while(k<tex.length && /[A-Za-z]/.test(tex[k]))k++;return k;}
+        return k+1;
+      }
+      return /[A-Za-z0-9.+-]/.test(tex[pos]) ? pos+1 : -1;
+    }
+    const numeratorEnd=argumentEnd(after);
+    const denominatorEnd=numeratorEnd<0 ? -1 : argumentEnd(numeratorEnd);
+    if(numeratorEnd<0 || denominatorEnd<0){
+      tex=tex.slice(0,start)+'\\operatorname{frac}'+tex.slice(after);
+    }
+  }
+  // Restore the exact row-separator strings saved above.
+  tex=tex.replace(/@@TEXROW(\d+)@@/g,(_,n)=>rows[Number(n)]||'\\\\\\\\');
   return tex;
+}
+
+function isIOSPlainTextCopy(source){
+  const s=String(source);
+  const mdHeadings=(s.match(/^[ \t]{0,3}#{1,6}[ \t]+/gm)||[]).length;
+  const mathDelims=(s.match(/\\\(|\\\)|\\\[|\\\]|\$\$|(?<!\\)\$(?!\$)/g)||[]).length;
+  return mdHeadings<40 && mathDelims<16 && /\\(?:lim|frac|dfrac|tfrac|sqrt|boxed|begin|sin|cos|tan|sinh|cosh|tanh|coth|sech|csch|ln|log|mathrm|infty|to)\b/.test(s);
+}
+
+function restoreIOSPlainText(source){
+  // The iOS “copy response” action frequently removes Markdown heading/list
+  // markers while leaving standalone TeX commands. Restore only high-confidence
+  // headings and table structure; do not invent missing mathematical content.
+  let lines=String(source).replace(/\r\n?/g,'\n').split('\n');
+  const headingLevel=line=>{
+    const x=line.trim();
+    if(!x || /^#{1,6}\s/.test(x) || looksLikeBareLatex(normalizeTex(normalizeMath(x)))) return 0;
+    if(/^CALC101:\s*Differential Calculus$/i.test(x)) return 1;
+    if(/^UNIT\s+[\dIVX]+\s*[—–-]/i.test(x)) return 1;
+    if(/^Lesson\s+\d+(?:\.\d+)?\s*[.:—–-]/i.test(x)) return 2;
+    if(/^\d+(?:\.\d+)+\s+[A-Z]/.test(x)) return 3;
+    if(/^(Course overview|Learning outcomes|Module map|How to use this module|Course overview|Final mastery checklist|Mastery checklist|Comprehensive Review and Final Examination|Final examination answer key|Suggested examination conditions|Progress tracker|Integrated Formula Sheet|Common Mistakes and Corrections|Block Post-Assessment|Problem Set|Pressure Test|Final Examination Blueprint)$/i.test(x)) return 2;
+    if(/^(Example\s+\d+|Worked example\s+\d+|Activity\s+\d+|Answer key\b|Selected solutions\b|Part\s+[A-EIVX]+\b|Level\s+[1-4]\b|Technique\s+[A-Z]:|UNIT\s+[\dIVX]+\b|Lesson\s+\d+\b)/i.test(x)) return 3;
+    if(/^CALC101\s*[—–-]\s*Comprehensive/i.test(x)) return 1;
+    return 0;
+  };
+  // Reconstruct the module-map table where iOS flattened its 3 columns into
+  // a sequence of one-cell lines. This is safe because each row starts "Unit N".
+  const mi=lines.findIndex(l=>l.trim()==='Module map');
+  if(mi>=0 && lines[mi+1]?.trim()==='Unit' && lines[mi+2]?.trim()==='Lessons' && lines[mi+3]?.trim()==='Main coverage'){
+    let j=mi+4, rows=[];
+    const nextText=()=>{while(j<lines.length && !lines[j].trim())j++;return j<lines.length?lines[j].trim():'';};
+    while(j<lines.length){
+      const first=nextText();
+      if(!/^Unit\s+\d+$/i.test(first)) break;
+      const unit=first; j++;
+      const lessons=nextText(); if(!lessons || /^(How to use this module|UNIT\s)/i.test(lessons)) break; j++;
+      const coverage=nextText(); if(!coverage || /^(How to use this module|UNIT\s)/i.test(coverage)) break; j++;
+      rows.push([unit,lessons,coverage]);
+    }
+    if(rows.length>=3){
+      const table=['| Unit | Lessons | Main coverage |','| --- | --- | --- |',...rows.map(r=>'| '+r.join(' | ')+' |')];
+      lines.splice(mi+1,j-(mi+1),...table);
+    }
+  }
+  // Restore headings while preserving every original word and math character.
+  lines=lines.map(line=>{
+    if(!line.trim() || /^\s{0,3}#{1,6}\s/.test(line)) return line;
+    const level=headingLevel(line);
+    return level ? '#'.repeat(level)+' '+line.trim() : line;
+  });
+  // In the iOS copy, list bullets are removed by the app. Restore only groups
+  // with explicit introductory cues and clear end headings.
+  const addListBetween=(startRx,endRx,marker)=>{
+    const a=lines.findIndex(l=>startRx.test(l.trim()));
+    if(a<0) return;
+    let b=a+1; while(b<lines.length && !endRx.test(lines[b].trim()) && !/^#{1,6}\s/.test(lines[b])) b++;
+    for(let k=a+1;k<b;k++){
+      const x=lines[k].trim();
+      if(!x || /^[-*+]\s/.test(x) || /^\d+[.)]\s/.test(x) || /^\\/.test(x) || /^(?:UNIT|Lesson|Example|Activity|Answer key|Module map)\b/i.test(x)) continue;
+      if(/[.!?]$/.test(x) && x.length>18) lines[k]=marker+' '+x;
+    }
+  };
+  addListBetween(/^By the end of CALC101, you should be able to:$/,/^#{1,6}\s*Module map$/i,'-');
+  addListBetween(/^(?:#{1,6}\s*)?How to use this module$/,/^The exercises progress/i,'-');
+  return lines.join('\n');
 }
 
 // AI models sometimes output LaTeX without $...$, $$...$$, \\(...\\), or \\[...\\].
@@ -280,30 +397,32 @@ function normalizeTex(tex){
 // obvious standalone LaTeX lines and render them as equations automatically.
 function looksLikeBareLatex(line){
   const s=String(line).trim();
-  if(!s || s.startsWith('#') || s.startsWith('>') || /^[-*+]	/.test(s) || /^\d+[.)]\s/.test(s)) return false;
-  if (/(?:^|\s)[^\s]+\.(?:pdf|docx?|pptx?|xlsx?|html?|txt|csv)(?:\s|$)/i.test(s)) return false;
-  // Explicit delimiters are handled by inlineMarkdown/the display-math reader.
-  if(s.includes('\\[') || s.includes('\\\\[') || s.includes('\\]') || s.includes('\\\\]') || s.includes('\\(') || s.includes('\\\\(') || s.includes('\\)') || s.includes('\\\\)') || s.includes('$')) return false;
-  // A standalone equation may begin with an operator (for example, =18-15+1\\boxed{4})
-  // or a command that ChatGPT copied without surrounding math delimiters.
-  const commandLine=/^(?:[=+\-*/()]\s*)?(?:\\\\?)(?:lim|frac|dfrac|tfrac|sqrt|boxed|begin|sum|int|sin|cos|tan|cot|sec|csc|sinh|cosh|tanh|coth|sech|csch|ln|log|exp|left|right|mathrm|mathbf|mathbb|text|displaystyle|partial|infty|pi|theta|alpha|beta|gamma|Delta|Rightarrow|to|cdot|times|leq|geq|neq|approx|in|notin|overline|underline)\b/.test(s);
-  const hasTexCommand=/(?:^|[^A-Za-z])\\\\?(?:boxed|frac|dfrac|tfrac|sqrt|lim|begin|sin|cos|tan|cot|sec|csc|sinh|cosh|tanh|coth|sech|csch|ln|log|mathrm|mathbf|mathbb|text|infty|pi|theta|alpha|beta|gamma|Delta|Rightarrow|cdot|times|leq|geq|neq|approx)\b/.test(s);
-  const equationShape=/[=+*/^_{}]|\\\\?\\\\(?:to|rightarrow|infty)/.test(s);
-  // Do not turn explanatory prose into equations just because it mentions a command.
+  if(!s || s.startsWith('#') || s.startsWith('>') || /^[-*+]\s/.test(s) || /^\d+[.)]\s/.test(s)) return false;
+  if(/(?:^|\s)[^\s]+\.(?:pdf|docx?|pptx?|xlsx?|html?|txt|csv)(?:\s|$)/i.test(s)) return false;
+  if(s.includes('\\[') || s.includes('\\]') || s.includes('\\(') || s.includes('\\)') || s.includes('$$') || /(?<!\\)\$/.test(s)) return false;
+  if(/^\\begin\{(?:cases|aligned|align|gathered|matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|array|split)\}/.test(s)) return true;
+  const commandLine=/^(?:[=+\-*/()]\s*)?(?:\\)?(?:lim|frac|dfrac|tfrac|sqrt|boxed|begin|sum|int|sin|cos|tan|cot|sec|csc|sinh|cosh|tanh|coth|sech|csch|ln|log|exp|left|right|mathrm|mathbf|mathbb|text|displaystyle|partial|infty|pi|theta|alpha|beta|gamma|Delta|Rightarrow|to|cdot|times|leq|geq|neq|approx|in|notin|overline|underline)\b/.test(s);
+  const hasTexCommand=/(?:^|[^A-Za-z])\\?(?:boxed|frac|dfrac|tfrac|sqrt|lim|begin|sin|cos|tan|cot|sec|csc|sinh|cosh|tanh|coth|sech|csch|ln|log|mathrm|mathbf|mathbb|text|infty|pi|theta|alpha|beta|gamma|Delta|Rightarrow|cdot|times|leq|geq|neq|approx|underline|hspace|operatorname)\b/.test(s);
+  const equationShape=/[=+*/^_{}]|\\(?:to|rightarrow|infty)/.test(s);
+  const compactEquation=/^(?:=\s*)?[-+]?\s*(?:\d+(?:\.\d+)?|[A-Za-z])(?:[A-Za-z0-9\s().,+\-*/=^_{}|<>≤≥√∞°\\]|\\boxed\{[^{}]*\}){0,180}\.?$/.test(s) && /[=^_]/.test(s);
+  if(compactEquation && !/[A-Za-z]{3,}\s+[A-Za-z]{3,}/.test(s)) return true;
   if(commandLine) return true;
-  if(hasTexCommand && equationShape && !/[A-Za-z]{3,}\s+[A-Za-z]{2,}/.test(s)) return true;
-  if(/\^\{[^}]+\}|_[{][^}]+[}]|\^[A-Za-z0-9]|_[A-Za-z0-9]/.test(s) && /[=+\-*/()]/.test(s) && !/[A-Za-z]{3,}\s+[A-Za-z]{2,}/.test(s)) return true;
+  if(hasTexCommand && equationShape && (!/[A-Za-z]{3,}\s+[A-Za-z]{3,}/.test(s) || /^\s*=/.test(s))) return true;
+  if(/\^\{[^}]+\}|_\{[^}]+\}|\^[A-Za-z0-9]|_[A-Za-z0-9]/.test(s) && /[=+*/()]/.test(s) && !/[A-Za-z]{3,}\s+[A-Za-z]{3,}/.test(s)) return true;
   return false;
 }
 
 function bareLatexHtml(line){
-  // Bare TeX from ChatGPT clipboard often has doubled command slashes but no
-  // surrounding $...$ or \\[...\\]. Normalize it before MathJax sees it.
   let tex=normalizeTex(String(line).trim());
-  // Add a visual separation when a boxed answer was copied immediately after a term.
+  // A frequent iOS clipboard artefact glues a boxed result to the preceding term.
   tex=tex.replace(/([^\s])\\boxed\{/g,'$1 \\boxed{');
   const x=escapeHtml(tex);
   return `<div class="math-display">\\[${x}\\]</div>`;
+}
+
+function plainTextHeadingLine(line){
+  const s=String(line).trim();
+  return /^#{1,6}\s/.test(s) || /^(?:CALC101:\s*Differential Calculus|UNIT\s+[\dIVX]+\s*[—–-]|Lesson\s+\d+(?:\.\d+)?\s*[.:—–-]|\d+(?:\.\d+)+\s+[A-Z]|Course overview|Learning outcomes|Module map|How to use this module|Example\s+\d+|Worked example\s+\d+|Activity\s+\d+|Answer key\b|Part\s+[A-EIVX]+\b|UNIT\s+[\dIVX]+\b|Lesson\s+\d+\b)/i.test(s);
 }
 
 function inlineMarkdown(text){
@@ -424,9 +543,30 @@ function normalizeDiagnosticQuestionNumbers(source){
   }).join('\n');
 }
 
+function texBraceBalance(text){
+  let depth=0, slashRun=0;
+  for(let i=0;i<String(text).length;i++){
+    const ch=String(text)[i];
+    if(ch==='\\'){slashRun++;continue;}
+    if(ch==='{' && slashRun%2===0) depth++;
+    else if(ch==='}' && slashRun%2===0) depth--;
+    slashRun=0;
+  }
+  return depth;
+}
+
 function convertMarkdown(){
   try {
   let source=decodeCopiedEntities(md.value).replace(/^(\s*\d+)\\\.(?=\s)/gm,'$1.');
+  plainIOSCopyMode=isIOSPlainTextCopy(source);
+  if(plainIOSCopyMode) source=restoreIOSPlainText(source);
+  const note=document.getElementById('compatNote');
+  if(note){
+    note.style.display=plainIOSCopyMode?'block':'none';
+    note.textContent=plainIOSCopyMode
+      ? 'iOS/plain-text copy detected. This converter renders the LaTeX that remains in the clipboard and restores recognizable headings. Some displayed equations or table cells were omitted by the copy action itself and cannot be reconstructed automatically; for a fully complete document, use the desktop/raw-Markdown copy when available.'
+      : '';
+  }
   source=normalizeDiagnosticQuestionNumbers(source);
   source=source.replace(/\r\n?/g,'\n');
   // Hide standalone source-file labels copied from ChatGPT (for example,
@@ -449,6 +589,43 @@ function convertMarkdown(){
     if(!line.trim()){i++;continue;}
 
     let normalized=normalizeMath(line).trim();
+    // iOS clipboard text sometimes splits one LaTeX expression over several lines,
+    // especially a \boxed{...} answer. Collect lines until the braces balance so
+    // MathJax never receives a fragment like the bare command `\boxed{`.
+    const initialBraceDepth=texBraceBalance(normalized);
+    if(initialBraceDepth>0 && /\\(?:boxed|frac|dfrac|tfrac|sqrt|left|text|mathrm|operatorname)\b/.test(normalized)){
+      const parts=[line]; let depth=initialBraceDepth; i++;
+      while(i<lines.length && depth>0 && parts.length<12){
+        if(plainTextHeadingLine(lines[i])) break;
+        parts.push(lines[i]); depth+=texBraceBalance(lines[i]); i++;
+      }
+      if(depth<=0){ html+=bareLatexHtml(parts.join('\n')); }
+      else { html+=`<pre class="raw-math-fallback">${escapeHtml(parts.join('\n'))}</pre>`; }
+      continue;
+    }
+    // iOS copies often strip display delimiters around multiline cases/aligned/matrix
+    // environments. Collect the entire environment before normalizing row breaks.
+    let envLineIndex=i;
+    let envStart=normalized.match(/\\begin\{(cases|aligned|align|gathered|matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|array|split)\}/);
+    let environmentPrefix='';
+    // The iOS copy may put `f(x)=` on one line and its `\begin{cases}` on the next.
+    if(!envStart && i+1<lines.length && /^(?:[A-Za-z][A-Za-z0-9_'()]*|[A-Za-z])\s*(?:=|:=)$/.test(normalized)){
+      const nextEnv=normalizeMath(lines[i+1]).trim().match(/\\begin\{(cases|aligned|align|gathered|matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|array|split)\}/);
+      if(nextEnv){environmentPrefix=line.trim()+'\n';i++;line=lines[i];normalized=normalizeMath(line).trim();envStart=nextEnv;}
+    }
+    if(envStart){
+      const env=envStart[1], parts=environmentPrefix ? [environmentPrefix.trimEnd(),line] : [line];
+      i++;
+      while(i<lines.length){
+        parts.push(lines[i]);
+        const done=lines[i].includes('\\end{'+env+'}');
+        i++;
+        if(done) break;
+        if(i<lines.length && /^\s*#{1,6}\s/.test(lines[i])) break;
+      }
+      html+=bareLatexHtml(parts.join('\n'));
+      continue;
+    }
     const bareCandidate=normalizeTex(normalized);
     if(looksLikeBareLatex(bareCandidate)){
       html+=bareLatexHtml(bareCandidate);
@@ -506,8 +683,10 @@ function convertMarkdown(){
     let p=[line];i++;
     while(i<lines.length && lines[i].trim()){
       const x=lines[i];
+      const nextMathLine=normalizeTex(normalizeMath(x).trim());
       if(/^\s*(#{1,6})\s+/.test(x)||/^\s*>/.test(x)||/^\s*[-*+]\s+/.test(x)||
-         /^\s*\d+[.)]\s+/.test(x)||tableAt(lines,i)||['\\[','$$'].includes(normalizeMath(x).trim())) break;
+         /^\s*\d+[.)]\s+/.test(x)||tableAt(lines,i)||['\\[','$$'].includes(normalizeMath(x).trim())||
+         looksLikeBareLatex(nextMathLine)||plainTextHeadingLine(x)) break;
       p.push(x);i++;
     }
     html+=`<p>${inlineMarkdown(p.join('\n')).replace(/\n/g,'<br>')}</p>`;
@@ -518,7 +697,7 @@ function convertMarkdown(){
   const finishPreview=()=>{
     renderedHTML=preview.innerHTML;
     paginatePreview();
-    setStatus('Converted.');
+    setStatus(plainIOSCopyMode ? 'Converted in iOS/plain-text mode. Check the note above for content that the clipboard omitted.' : 'Converted.');
   };
   if(window.MathJax && MathJax.typesetPromise){
     MathJax.typesetClear([preview]);
