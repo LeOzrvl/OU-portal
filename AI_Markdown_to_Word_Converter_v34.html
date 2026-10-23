@@ -1,0 +1,1039 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI Markdown → Word Converter v34</title>
+
+<!-- MathJax renders LaTeX equations in the preview. -->
+<script>
+window.MathJax = {
+  tex: {
+    packages: {'[+]': ['noerrors']},
+    inlineMath: [['\\(','\\)'], ['$','$']],
+    displayMath: [['\\[','\\]'], ['$$','$$']],
+    processEscapes: true,
+    // Common hyperbolic secant/cosecant commands are not built into MathJax's
+    // default TeX vocabulary. Define them as upright named functions so tables
+    // and standalone equations such as \sech^2(x) and \csch x render correctly.
+    macros: {
+      sech: '\\operatorname{sech}',
+      csch: '\\operatorname{csch}'
+    }
+  },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+
+<!-- Used only when the user clicks Download Word. -->
+<script src="https://cdn.jsdelivr.net/npm/html-docx-js@0.3.1/dist/html-docx.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/docx@9.8.1/dist/index.umd.cjs"></script>
+
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#eef1f5;color:#202124;font-family:Arial,Helvetica,sans-serif}
+.topbar{
+  position:sticky;top:0;z-index:100;background:#fff;border-bottom:1px solid #d9dde3;
+  padding:12px 16px;display:flex;align-items:center;gap:9px;flex-wrap:wrap
+}
+button,select{
+  border:1px solid #c8ccd1;border-radius:7px;padding:9px 12px;font:inherit;
+}
+button{background:#1a73e8;color:#fff;border:0;font-weight:700;cursor:pointer}
+button:hover{filter:brightness(.95)}
+button.secondary{background:#5f6368}
+button.green{background:#188038}
+button.dark{background:#202124}
+label{font-size:13px;font-weight:700;color:#4d5156}
+.status{font-size:13px;color:#188038;margin-left:3px}
+.app{max-width:1450px;margin:0 auto;padding:18px}
+.layout{display:grid;grid-template-columns:minmax(360px,1fr) minmax(420px,1.2fr);gap:16px}
+.panel{background:#fff;border:1px solid #d9dde3;border-radius:10px;overflow:hidden}
+.panel-title{padding:11px 14px;font-weight:700;border-bottom:1px solid #e1e4e8}
+textarea{
+  width:100%;height:calc(100vh - 150px);min-height:500px;resize:vertical;
+  border:0;outline:0;padding:18px;font:14px/1.6 Consolas,"Courier New",monospace
+}
+.preview-wrap{padding:18px;background:#eef1f5;height:calc(100vh - 150px);min-height:420px;max-height:calc(100vh - 150px);overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;position:relative;touch-action:pan-x pan-y;-webkit-overflow-scrolling:touch}
+.preview-pages{display:flex;flex-direction:column;align-items:center;gap:18px;min-width:max-content;width:max-content;min-height:100%;margin:0 auto}
+.page{
+  --body-size:10.5pt;
+  --line-spacing:1.5;
+  box-sizing:border-box;width:8.27in;height:11.69in;margin:0 auto;background:#fff;
+  padding:.65in .7in;box-shadow:0 2px 12px rgba(0,0,0,.10);
+  display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr);gap:.35in;
+  overflow:hidden;flex:0 0 auto;min-width:0;
+}
+.page.col2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.page.col3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.page-column{width:100%;height:100%;min-width:0;min-height:0;overflow:hidden;align-self:stretch}
+.page h1{font-size:calc(var(--body-size) * 1.38);line-height:1.2;font-weight:700;margin:0 0 9px;break-after:avoid}
+.page h2{font-size:calc(var(--body-size) * 1.18);line-height:1.25;font-weight:700;margin:16px 0 7px;break-after:avoid}
+.page h3{font-size:calc(var(--body-size) * 1.08);line-height:1.3;font-weight:700;margin:13px 0 6px;break-after:avoid}
+.page h4,.page h5,.page h6{font-size:calc(var(--body-size) * 1.02);line-height:1.3;font-weight:700;margin:11px 0 5px;break-after:avoid}
+.page p{font-size:var(--body-size,10.5pt);line-height:var(--line-spacing,1.5);margin:0 0 9px}
+.page ul,.page ol{font-size:var(--body-size,10.5pt);line-height:var(--line-spacing,1.5);margin-top:4px;margin-bottom:10px}
+.page li{margin:2px 0;line-height:var(--line-spacing,1.5)}
+.page table{border-collapse:collapse;table-layout:fixed;width:100%;max-width:100%;font-size:9.5pt;margin:10px 0;break-inside:avoid;overflow-wrap:anywhere}
+.page th,.page td{border:1px solid #aeb4ba;padding:5px 6px;text-align:left;vertical-align:top;min-width:0;overflow-wrap:anywhere;word-break:normal}
+.page th{background:#f1f3f4}
+.page blockquote{font-size:var(--body-size,10.5pt);line-height:var(--line-spacing,1.5);border-left:3px solid #9aa0a6;background:#f8f9fa;margin:10px 0;padding:7px 10px;break-inside:avoid}
+.page hr{border:0;border-top:1px solid #d9dde3;margin:18px 0}
+.page code{background:#f1f3f4;border-radius:3px;padding:1px 4px;font-family:Consolas,monospace}
+.math-display{text-align:center;font-size:.88em;line-height:1.15;margin:8px 0;padding:2px 0;max-width:100%;min-width:0;overflow-x:auto;overflow-y:hidden;break-inside:avoid;scrollbar-width:thin}
+.math-display mjx-container{max-width:100%;}
+.math-display mjx-container[display="true"]{max-width:100%;}
+.page p,.page li,.page blockquote{min-width:0;overflow-wrap:break-word;}
+.page mjx-container{font-size:90% !important}
+.math-inline{white-space:normal;max-width:100%;}
+.answer-blank{display:inline-block;min-width:7em;border-bottom:1px solid #777;height:.9em;vertical-align:baseline;margin:0 .12em}
+.page img{max-width:100%}
+.page-column > :first-child{margin-top:0}
+.page a{color:#1a73e8}
+.help{margin-top:14px;background:#fff;border:1px solid #d9dde3;border-radius:9px;padding:12px 14px;font-size:13px;line-height:1.5;color:#4d5156}
+@media(max-width:950px){
+  .layout{grid-template-columns:minmax(0,1fr)}
+  textarea{height:420px;min-height:320px}
+  .preview-wrap{height:72vh;min-height:420px;max-height:72vh;overflow:auto;padding:12px}
+  .preview-pages{margin-left:0;margin-right:0}
+}
+@media print{
+  @page{size:auto;margin:0}
+  .topbar,.panel-title,textarea,.help{display:none!important}
+  html,body{background:#fff!important;margin:0!important;padding:0!important}
+  .app{padding:0!important;margin:0!important;max-width:none!important}
+  .layout{display:block!important}
+  .panel{border:0!important}
+  .preview-wrap{padding:0!important;background:#fff!important;overflow:visible!important;height:auto!important;max-height:none!important;min-height:0!important}
+  .preview-pages{display:block!important;width:100%!important}
+  .page{box-shadow:none!important;margin:0!important;break-after:page;page-break-after:always;width:var(--print-w)!important;height:var(--print-h)!important;overflow:hidden!important;grid-template-rows:minmax(0,1fr)!important}
+  .page:last-child{break-after:auto;page-break-after:auto}
+  .page.col2{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .page.col3{grid-template-columns:repeat(3,minmax(0,1fr))!important}
+}
+</style>
+</head>
+
+<body>
+<div class="topbar">
+  <strong>AI Markdown → Word v34</strong>
+  <button onclick="convertMarkdown()">Convert</button>
+  <button class="green" onclick="downloadWord()">Download Word</button>
+  <button class="secondary" onclick="copyForWord()">Copy for Word</button>
+  <button class="dark" onclick="printPDF()">Print / PDF</button>
+  <label for="columns">Columns:</label>
+  <select id="columns" onchange="setColumns(this.value)">
+    <option value="1">1 column</option>
+    <option value="2">2 columns</option>
+    <option value="3">3 columns</option>
+  </select>
+  <label for="paper">Paper:</label>
+  <select id="paper" onchange="setPaper(this.value)">
+    <option value="letter">Letter (8.5 × 11)</option>
+    <option value="a4" selected>A4 (8.27 × 11.69)</option>
+    <option value="folio">Folio (8.5 × 13)</option>
+    <option value="legal">Legal (8.5 × 14)</option>
+    <option value="a5">A5 (5.83 × 8.27)</option>
+    <option value="a3">A3 (11.69 × 16.54)</option>
+  </select>
+  <label for="spacing">Spacing:</label>
+  <select id="spacing" onchange="setSpacing(this.value)">
+    <option value="1">1.0</option>
+    <option value="1.15">1.15</option>
+    <option value="1.5" selected>1.5</option>
+    <option value="2">2.0</option>
+  </select>
+  <label for="textSize">Text:</label>
+  <select id="textSize" onchange="setTextSize(this.value)">
+    <option value="9">9 pt</option>
+    <option value="10">10 pt</option>
+    <option value="10.5" selected>10.5 pt</option>
+    <option value="11">11 pt</option>
+    <option value="12">12 pt</option>
+    <option value="14">14 pt</option>
+    <option value="16">16 pt</option>
+  </select>
+  <span id="status" class="status"></span>
+</div>
+
+<div class="app">
+  <div class="layout">
+    <section class="panel">
+      <div class="panel-title">Paste AI Markdown</div>
+      <textarea id="markdown" placeholder="Paste your entire AI response here...
+
+Paste raw ChatGPT text or Markdown.
+Supports:
+# Headings
+**bold** and *italic*
+- lists
+1. numbered lists
+| tables |
+> quotes
+\[ LaTeX equations \]
+$$ display equations $$
+\( inline equations \)"></textarea>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title">Live Word-Style Preview</div>
+      <div class="preview-wrap">
+        <main id="preview" class="preview-pages">
+          <p style="color:#777">Paste Markdown on the left.</p>
+        </main>
+      </div>
+    </section>
+  </div>
+  <div class="help">
+    <strong>Tip:</strong> Choose <strong>2 columns</strong> before downloading if you want a two-column study handout.
+    The preview pane is a dedicated, touch-scrollable area with its own vertical and horizontal scrollbars, so you can move through the paper stack without scrolling the whole webpage. Long equations and wide tables can scroll horizontally instead of being clipped. Double-escaped outer math delimiters are normalized without changing matrix row separators. Hyperbolic secant/cosecant commands (\sech and \csch) are defined for MathJax. Tables split only at actual Markdown separators, not at absolute-value bars inside formulas such as \|x\|. Matrix row separators are preserved. The Word export embeds rendered equations.
+  </div>
+</div>
+
+<script>
+const md = document.getElementById('markdown');
+const preview = document.getElementById('preview');
+let debounceTimer;
+let currentColumns=1;
+let currentPaper='a4';
+const PAPER_SIZES={
+  letter:{w:'8.5in',h:'11in',twW:12240,twH:15840,label:'Letter'},
+  a4:{w:'8.27in',h:'11.69in',twW:11906,twH:16838,label:'A4'},
+  folio:{w:'8.5in',h:'13in',twW:12240,twH:18720,label:'Folio'},
+  legal:{w:'8.5in',h:'14in',twW:12240,twH:20160,label:'Legal'},
+  a5:{w:'5.83in',h:'8.27in',twW:8391,twH:11906,label:'A5'},
+  a3:{w:'11.69in',h:'16.54in',twW:16838,twH:23811,label:'A3'}
+};
+let currentSpacing=1.5;
+let currentTextSize=10.5;
+let renderedHTML='';
+
+function escapeHtml(s){
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+          .replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+}
+
+function decodeCopiedEntities(s){
+  // ChatGPT/HTML copies sometimes include entities literally (for example &#x20;).
+  // Decode entities before Markdown/HTML escaping so they become real characters.
+  return String(s)
+    .replace(/&#x([0-9a-f]{1,6});/gi, (_,hex) => {
+      const n=parseInt(hex,16); return n<=0x10FFFF ? String.fromCodePoint(n) : _;
+    })
+    .replace(/&#([0-9]{1,7});/g, (_,num) => {
+      const n=parseInt(num,10); return n<=0x10FFFF ? String.fromCodePoint(n) : _;
+    })
+    .replace(/&nbsp;/gi,'\u00a0').replace(/&amp;/gi,'&')
+    .replace(/&lt;/gi,'<').replace(/&gt;/gi,'>')
+    .replace(/&quot;/gi,'"').replace(/&#39;|&apos;/gi,"'");
+}
+
+function normalizeMath(s){
+  // Only normalize copied outer delimiters here. Never globally collapse slashes:
+  // `\\` is a meaningful row separator inside matrix/aligned environments.
+  const bs=String.fromCharCode(92);
+  return String(s).replace(/\\\\([\[\]\(\)])/g,(_,d)=>bs+d);
+}
+
+function normalizeTex(tex){
+  // Fix copy/paste escaping inside a protected math expression while preserving
+  // actual row separators in matrix/aligned/cases environments.
+  const envRe=/\\begin\{(matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|smallmatrix|aligned|align|cases|array)\}([\s\S]*?)\\end\{\1\}/g;
+  const known=/^(?:frac|dfrac|tfrac|sqrt|mathrm|mathbf|mathbb|text|textbf|textit|cdot|times|left|right|begin|end|boxed|quad|qquad|ne|neq|geq|leq|implies|Rightarrow|Delta|alpha|beta|theta|sum|int|ln|log|exp|sin|cos|tan|lim|overline|underline|pm|mp|div|circ|infty|operatorname|displaystyle|prod|partial|nabla|ell|Omega|omega|mu|sigma|pi|rightarrow|to|in|notin|approx|equiv|cdots|ldots|%|_|\{|\})/;
+  const rows=[];
+  tex=String(tex).replace(envRe,(whole,name,body)=>{
+    // Protect row separators; a third slash before a row entry is a copy artifact.
+    body=body.replace(/\\\\\\(?=\s*(?:[-+]?\d|[A-Za-z]))/g,'\\\\');
+    body=body.replace(/\\\\/g,()=>{const id=rows.length;rows.push('\\\\');return `@@TEXROW${id}@@`;});
+    return `\\begin{${name}}${body}\\end{${name}}`;
+  });
+  // Outside environments, doubled slashes are not row breaks in these source files.
+  // Collapse repeated slashes and repair escaped Markdown punctuation/subscripts.
+  tex=tex.replace(/\\{2,}/g,'\\');
+  tex=tex.replace(/\\(?=\s*[<>=])/g,'');
+  tex=tex.replace(/\\([0-9])/g,'$1');
+  // Preserve unknown LaTeX commands. Stripping their backslash corrupts valid commands
+  // such as \hspace, \vspace, \kern, and package-specific macros.
+  // Underscores escaped for Markdown must become TeX subscripts; keep \%, \{, \, as valid TeX commands.
+  tex=tex.replace(/\\_/g,'_');
+  // Repair duplicate scripts on a single symbol. Some ChatGPT copies produce
+  // H_f^\circ_{\mathrm{rxn}}; TeX sees two subscripts on H. Combine the labels
+  // into one subscript while preserving the superscript. Nested \mathrm{...}
+  // is handled explicitly because a simple [^{}]+ pattern cannot match it.
+  tex=tex.replace(/([A-Za-z])_([A-Za-z0-9]+)\^\{([^{}]+)\}_\{\\mathrm\{([^{}]+)\}\}/g, '$1_{$2,\\mathrm{$4}}^{$3}');
+  tex=tex.replace(/([A-Za-z])_\{([^{}]+)\}\^\{([^{}]+)\}_\{([^{}]+)\}/g, '$1_{$2,$4}^{$3}');
+  tex=tex.replace(/([A-Za-z])_([A-Za-z0-9]+)(\^\{[^{}]+\})_\{([^{}]+)\}/g, '$1_{$2,$4}$3');
+  tex=tex.replace(/([A-Za-z])_([A-Za-z0-9]+)(\^[A-Za-z0-9])_\{([^{}]+)\}/g, '$1_{$2,$4}$3');
+  // Repair a repeated unbraced subscript (x_i_j) without altering separate
+  // subscripts belonging to different bases.
+  tex=tex.replace(/([A-Za-z\]\)])_([A-Za-z0-9]+)_([A-Za-z0-9]+)/g, '$1_{$2,$3}');
+  // Do not rewrite ordinary single subscripts: H_2O, [A]_t, and t_{1/2} stay intact.
+  // Restore genuine row separators after all other slash normalization.
+  tex=tex.replace(/@@TEXROW(\d+)@@/g,(_,n)=>rows[Number(n)]||'\\\\');
+  return tex;
+}
+
+// AI models sometimes output LaTeX without $...$, $$...$$, \\(...\\), or \\[...\\].
+// On iPad this is especially common when text is copied from an AI answer. Detect
+// obvious standalone LaTeX lines and render them as equations automatically.
+function looksLikeBareLatex(line){
+  const s=line.trim();
+  if(!s || s.startsWith('#') || s.startsWith('>') || /^[-*+]\s/.test(s) || /^\d+[.)]\s/.test(s)) return false;
+  // Do not mistake reference filenames for equations. For example,
+  // `Module_1_CO1-2\_ Stoichiometry(2).pdf` contains underscores, hyphens,
+  // and parentheses but is plain text. Wrapping it in math triggers MathJax's
+  // misleading "Double subscripts" warning.
+  if (/(?:^|\s)[^\s]+\.(?:pdf|docx?|pptx?|xlsx?|html?|txt|csv)(?:\s|$)/i.test(s)) return false;
+  // If explicit math delimiters are present, let inlineMarkdown handle them.
+  // Wrapping these lines again creates nested delimiters and visible stray \] text.
+  if(s.includes('\\[') || s.includes('\\\\[') || s.includes('\\]') || s.includes('\\\\]') || s.includes('\\(') || s.includes('\\\\(') || s.includes('\\)') || s.includes('\\\\)') || s.includes('$')) return false;
+  // Never treat ordinary prose containing a LaTeX command as a standalone equation.
+  if(/[A-Za-z]{3,}\s+[A-Za-z]{2,}/.test(s) && !/^\\(?:boxed|frac|sqrt|begin|sum|int)\b/.test(s)) return false;
+  if(/^\\(?:pm|mp|sqrt|frac|boxed|text|times|cdot|div|leq|geq|neq|approx|pi|theta|alpha|beta|gamma|Delta|sum|int|infty|Rightarrow|left|right|begin|end)\b/.test(s)) return true;
+  if(/\^\{[^}]+\}|_[{][^}]+[}]|\^[A-Za-z0-9]|_[A-Za-z0-9]/.test(s) && /[=+\-*/()]/.test(s) && !/[A-Za-z]{3,}\s+[A-Za-z]{2,}/.test(s)) return true;
+  return false;
+}
+
+function bareLatexHtml(line){
+  const tex=line.trim();
+  // boxed expressions and other clearly equation-like lines are display equations.
+  const display=/\\(?:boxed|begin|sum|int|frac)\b/.test(tex) || tex.length>45;
+  const x=escapeHtml(tex);
+  return display
+    ? `<div class="math-display">\\[${x}\\]</div>`
+    : `<div class="math-display">\\[${x}\\]</div>`;
+}
+
+function inlineMarkdown(text){
+  text=normalizeMath(text);
+  const math=[];
+  function protect(re,type){
+    text=text.replace(re,(_,x)=>{
+      const id=math.length; math.push({type,tex:x}); return `@@M${id}@@`;
+    });
+  }
+
+  protect(/\\\[([\s\S]*?)\\\]/g,'display');
+  protect(/\$\$([\s\S]*?)\$\$/g,'display');
+  protect(/\\\(([\s\S]*?)\\\)/g,'inline');
+  protect(/(?<!\$)\$([^$\n]+)\$(?!\$)/g,'inline');
+
+  const answerBlanks=[];
+  text=text.replace(/(?:\\_){5,}|_{5,}/g, match=>{ const id=answerBlanks.length; answerBlanks.push(match); return `@@BLANK${id}@@`; });
+
+  // Unescape Markdown punctuation in ordinary text, e.g. Q \\< K and 1\\. item.
+  // Math has already been extracted, so valid TeX commands are not touched.
+  text=text.replace(/\\([.!_<>])/g,'$1');
+  text=escapeHtml(text);
+  text=text.replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g,'<img src="$2" alt="$1">');
+  text=text.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,'<a href="$2">$1</a>');
+  text=text.replace(/`([^`]+)`/g,'<code>$1</code>');
+  text=text.replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
+  text=text.replace(/__([^_]+)__/g,'<strong>$1</strong>');
+  text=text.replace(/~~([^~]+)~~/g,'<del>$1</del>');
+  text=text.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g,'$1<em>$2</em>');
+  text=text.replace(/(^|[^_])_([^_\n]+)_(?!_)/g,'$1<em>$2</em>');
+  // Markdown-escaped punctuation in ordinary text (e.g. `1\.` and `Module\_1`)
+  // is an escape marker, not content. Math has already been protected above.
+  text=text.replace(/\\([.!_])/g,'$1');
+
+  answerBlanks.forEach((_,i)=>{ text=text.replace(`@@BLANK${i}@@`, '<span class="answer-blank"></span>'); });
+  math.forEach((m,i)=>{
+    // Normalize escaped underscores and malformed copy/paste backslashes with
+    // environment-aware handling so matrix row breaks remain intact.
+    m.tex = normalizeTex(m.tex);
+    // Nuclear notation: keep both scripts on the empty base and render element symbols upright.
+    m.tex = m.tex.replace(/\{\}\^\{([^{}]+)\}_\{([^{}]+)\}([A-Z][a-z]?)/g, '{}^{$1}_{$2}\\!\\mathrm{$3}');
+    m.tex = m.tex.replace(/\^\{([^{}]+)\}_\{([^{}]+)\}([A-Z][a-z]?)/g, '{}^{$1}_{$2}\\!\\mathrm{$3}');
+    const x=escapeHtml(m.tex.trim());
+    const rendered=m.type==='display'
+      ? `<div class="math-display">\\[${x}\\]</div>`
+      : `<span class="math-inline">\\(${x}\\)</span>`;
+    text=text.replace(`@@M${i}@@`,rendered);
+  });
+  return text;
+}
+
+function splitMarkdownTableCells(row){
+  // Split a Markdown table row only at structural pipes. Pipes used inside TeX,
+  // such as \\|x\\| for absolute value, must remain inside the same cell.
+  // Normalize copied outer TeX delimiters first; this does not rewrite TeX row breaks.
+  const s=normalizeMath(String(row));
+  const cells=[];
+  let start=0, i=0, mode=null;
+  while(i<s.length){
+    if(mode===null){
+      if(s.startsWith('\\[',i)){mode='display-bracket';i+=2;continue;}
+      if(s.startsWith('\\(',i)){mode='inline-paren';i+=2;continue;}
+      if(s.startsWith('$$',i)){mode='display-dollar';i+=2;continue;}
+      if(s[i]==='$'){mode='inline-dollar';i++;continue;}
+      // An escaped literal pipe outside math is content, not a table boundary.
+      if(s[i]==='\\' && s[i+1]==='|'){i+=2;continue;}
+      if(s[i]==='|') {cells.push(s.slice(start,i).trim());start=i+1;}
+      i++; continue;
+    }
+    if(mode==='display-bracket' && s.startsWith('\\]',i)){mode=null;i+=2;continue;}
+    if(mode==='inline-paren' && s.startsWith('\\)',i)){mode=null;i+=2;continue;}
+    if(mode==='display-dollar' && s.startsWith('$$',i)){mode=null;i+=2;continue;}
+    if(mode==='inline-dollar' && s[i]==='$'){mode=null;i++;continue;}
+    // Keep escaped delimiters such as \\|, \\{ and \\} inside the math span.
+    if(s[i]==='\\' && i+1<s.length){i+=2;continue;}
+    i++;
+  }
+  cells.push(s.slice(start).trim());
+  // Remove empty edge cells only when they come from the optional outer pipes.
+  if(cells.length && cells[0]==='') cells.shift();
+  if(cells.length && cells[cells.length-1]==='') cells.pop();
+  return cells;
+}
+
+function tableAt(lines,i){
+  if(i+1>=lines.length || !lines[i].includes('|')) return null;
+  if(!/^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(lines[i+1])) return null;
+  const split=splitMarkdownTableCells;
+  const h=split(lines[i]);
+  let out='<table><thead><tr>'+h.map(x=>`<th>${inlineMarkdown(x)}</th>`).join('')+'</tr></thead><tbody>';
+  let j=i+2;
+  while(j<lines.length && lines[j].includes('|') && lines[j].trim()){
+    const c=split(lines[j]);
+    out+='<tr>'+h.map((_,k)=>`<td>${inlineMarkdown(c[k]||'')}</td>`).join('')+'</tr>';
+    j++;
+  }
+  out+='</tbody></table>';
+  return {html:out,next:j};
+}
+
+function normalizeDiagnosticQuestionNumbers(source){
+  const lines=source.split('\n');
+  let inDiagnostic=false, question=0;
+  return lines.map(line=>{
+    if(/\b(?:\d+\s*[-–]\s*item\s+)?diagnostic\b/i.test(line)){
+      inDiagnostic=true; question=0; return line;
+    }
+    if(inDiagnostic && (/^\s*#{1,6}\s/.test(line) || /^\s*PART\s+[IVX]+\b/i.test(line) || /\b(?:check my answers|reveal written answer key|your final review strategy)\b/i.test(line))){
+      inDiagnostic=false;
+    }
+    if(inDiagnostic){
+      const m=line.match(/^(\s*)\d+[.)](\s+.*)$/);
+      if(m){ question++; return `${m[1]}${question}.${m[2]}`; }
+    }
+    return line;
+  }).join('\n');
+}
+
+function convertMarkdown(){
+  try {
+  let source=decodeCopiedEntities(md.value).replace(/^(\s*\d+)\\\.(?=\s)/gm,'$1.');
+  source=normalizeDiagnosticQuestionNumbers(source);
+  source=source.replace(/\r\n?/g,'\n');
+  // Hide standalone source-file labels copied from ChatGPT (for example,
+  // "Module_1_CO1-2\_ Stoichiometry(2).pdf"). These are metadata, not module
+  // content, and otherwise can be stranded at the top of the next preview page.
+  // Only remove a whole line that consists of a filename; keep filenames in prose.
+  source=source.split('\n').filter(line =>
+    !/^\s*[\w\\(). -]+\.(?:pdf|docx?|pptx?|xlsx?|html?|txt|csv)\s*$/i.test(line)
+  ).join('\n');
+  // Markdown lists from ChatGPT often have blank lines between every item.
+  // Join only blank lines that separate numbered items so the browser doesn't
+  // restart each isolated <ol> at 1.
+  let previous;
+  do { previous=source; source=source.replace(/(^[ \t]*\d+[.)]\s+[^\n]*)\n[ \t]*\n(?=[ \t]*\d+[.)]\s+)/gm,'$1\n'); } while(source!==previous);
+  const lines=source.split('\n');
+  let html='',i=0;
+
+  while(i<lines.length){
+    let line=lines[i];
+    if(!line.trim()){i++;continue;}
+
+    let normalized=normalizeMath(line).trim();
+    if(looksLikeBareLatex(normalized)){
+      html+=bareLatexHtml(normalized);
+      i++;
+      continue;
+    }
+    if(normalized==='\\[' || normalized==='$$'){
+      const close=normalized==='\\['?'\\]':'$$';
+      let parts=[];i++;
+      while(i<lines.length && normalizeMath(lines[i]).trim()!==close){parts.push(normalizeMath(lines[i]));i++;}
+      if(i<lines.length)i++;
+      html+=`<div class="math-display">\\[${escapeHtml(parts.join('\n'))}\\]</div>`;
+      continue;
+    }
+
+    let m=line.match(/^\s*(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if(m){const n=m[1].length;html+=`<h${n}>${inlineMarkdown(m[2])}</h${n}>`;i++;continue;}
+
+    if(/^\s*((\*\s*){3,}|(-\s*){3,}|(_\s*){3,})$/.test(line)){html+='<hr>';i++;continue;}
+
+    const t=tableAt(lines,i);
+    if(t){html+=t.html;i=t.next;continue;}
+
+    if(/^\s*>/.test(line)){
+      let q=[];
+      while(i<lines.length && /^\s*>/.test(lines[i])){q.push(lines[i].replace(/^\s*>\s?/,'') );i++;}
+      html+=`<blockquote>${inlineMarkdown(q.join('\n')).replace(/\n/g,'<br>')}</blockquote>`;continue;
+    }
+
+    if(/^\s*[-*+]\s+/.test(line)){
+      let a=[];
+      while(i<lines.length && /^\s*[-*+]\s+/.test(lines[i])){a.push(lines[i].replace(/^\s*[-*+]\s+/,''));i++;}
+      html+='<ul>'+a.map(x=>`<li>${inlineMarkdown(x)}</li>`).join('')+'</ul>';continue;
+    }
+
+    if(/^\s*\d+[.)]\s+/.test(line)){
+      // Treat numbered items as one ordered list even when the copied AI response
+      // inserts blank lines between them. This prevents every item restarting at 1.
+      const a=[];
+      const firstNumber=parseInt((lines[i].match(/^\s*(\d+)[.)]\s+/)||[])[1]||'1',10);
+      while(i<lines.length){
+        if(/^\s*\d+[.)]\s+/.test(lines[i])){
+          a.push(lines[i].replace(/^\s*\d+[.)]\s+/,''));
+          i++;
+          let j=i;
+          while(j<lines.length && !lines[j].trim()) j++;
+          if(j<lines.length && /^\s*\d+[.)]\s+/.test(lines[j])){ i=j; continue; }
+          break;
+        }
+        break;
+      }
+      html+=`<ol start="${firstNumber}">`+a.map(x=>`<li>${inlineMarkdown(x)}</li>`).join('')+'</ol>';continue;
+    }
+
+    let p=[line];i++;
+    while(i<lines.length && lines[i].trim()){
+      const x=lines[i];
+      if(/^\s*(#{1,6})\s+/.test(x)||/^\s*>/.test(x)||/^\s*[-*+]\s+/.test(x)||
+         /^\s*\d+[.)]\s+/.test(x)||tableAt(lines,i)||['\\[','$$'].includes(normalizeMath(x).trim())) break;
+      p.push(x);i++;
+    }
+    html+=`<p>${inlineMarkdown(p.join('\n')).replace(/\n/g,'<br>')}</p>`;
+  }
+
+  const convertedHTML=html||'<p style="color:#777">Paste Markdown on the left.</p>';
+  preview.innerHTML=convertedHTML;
+  const finishPreview=()=>{
+    renderedHTML=preview.innerHTML;
+    paginatePreview();
+    setStatus('Converted.');
+  };
+  if(window.MathJax && MathJax.typesetPromise){
+    MathJax.typesetClear([preview]);
+    MathJax.typesetPromise([preview]).then(finishPreview).catch(()=>finishPreview());
+  }else{
+    finishPreview();
+  }
+  } catch(err) {
+    console.error(err);
+    preview.innerHTML='<p style=\"color:#b00020\"><strong>Conversion error:</strong> '+escapeHtml(err.message||String(err))+'</p>';
+    setStatus('Conversion failed: '+(err.message||err),true);
+  }
+}
+
+function applyTypographyToPages(){
+  document.querySelectorAll('#preview .page').forEach(page=>{
+    page.style.setProperty('--body-size', currentTextSize + 'pt');
+    page.style.setProperty('--line-spacing', currentSpacing);
+  });
+}
+
+function setSpacing(v){
+  currentSpacing=parseFloat(v)||1.5;
+  applyTypographyToPages();
+  paginatePreview();
+  setStatus('Line spacing '+currentSpacing.toFixed(currentSpacing===1.15?2:1)+'.');
+}
+
+function setTextSize(v){
+  currentTextSize=parseFloat(v)||10.5;
+  applyTypographyToPages();
+  paginatePreview();
+  setStatus('Text size '+currentTextSize+' pt.');
+}
+
+function getPaper(){ return PAPER_SIZES[currentPaper] || PAPER_SIZES.a4; }
+
+function applyPaperToPages(){
+  const paper=getPaper();
+  document.querySelectorAll('#preview .page').forEach(page=>{
+    page.style.width=paper.w;
+    page.style.height=paper.h;
+  });
+}
+
+function paginatePreview(){
+  if(!renderedHTML) return;
+
+  const staging=document.createElement('div');
+  staging.innerHTML=renderedHTML;
+  staging.style.position='fixed';
+  staging.style.left='-100000px';
+  staging.style.top='0';
+  staging.style.width=getPaper().w;
+  staging.style.height='auto';
+  staging.style.visibility='hidden';
+  staging.style.pointerEvents='none';
+  document.body.appendChild(staging);
+
+  preview.innerHTML='';
+
+  const nodes=Array.from(staging.children);
+  const cols=Math.max(1,currentColumns);
+  let page=null;
+  let column=null;
+  let colIndex=0;
+
+  const newPage=()=>{
+    page=document.createElement('section');
+    page.className='page'+(cols===2?' col2':cols===3?' col3':'');
+    page.style.width=getPaper().w;
+    page.style.height=getPaper().h;
+    page.style.setProperty('--body-size', currentTextSize + 'pt');
+    page.style.setProperty('--line-spacing', currentSpacing);
+    column=null;
+    colIndex=0;
+    preview.appendChild(page);
+  };
+
+  const newColumn=()=>{
+    column=document.createElement('div');
+    column.className='page-column';
+    page.appendChild(column);
+    colIndex++;
+  };
+
+  newPage();
+  newColumn();
+
+  for(const node of nodes){
+    const block=node.cloneNode(true);
+    column.appendChild(block);
+
+    // A block that crosses the column boundary is moved to the next column.
+    // Very large single blocks are allowed to overflow rather than being lost.
+    const overflow=column.scrollHeight > column.clientHeight + 2;
+    if(overflow && column.children.length>1){
+      column.removeChild(block);
+      if(colIndex<cols){
+        newColumn();
+        column.appendChild(block);
+      }else{
+        newPage();
+        newColumn();
+        column.appendChild(block);
+      }
+    }
+  }
+
+  applyPaperToPages();
+  applyTypographyToPages();
+  staging.remove();
+}
+
+function setColumns(n){
+  currentColumns=Math.max(1,parseInt(n,10)||1);
+  paginatePreview();
+  setStatus(`${currentColumns} column${currentColumns===1?'':'s'} selected.`);
+}
+
+function setPaper(v){
+  currentPaper=PAPER_SIZES[v]?v:'a4';
+  paginatePreview();
+  setStatus(getPaper().label+' paper selected.');
+}
+
+function printPDF(){
+  const paper=getPaper();
+  let style=document.getElementById('dynamicPrintStyle');
+  if(!style){ style=document.createElement('style'); style.id='dynamicPrintStyle'; document.head.appendChild(style); }
+  style.textContent=`@media print{ @page{size:${paper.w} ${paper.h}; margin:0;} :root{--print-w:${paper.w};--print-h:${paper.h};} }`;
+  document.documentElement.style.setProperty('--print-w',paper.w);
+  document.documentElement.style.setProperty('--print-h',paper.h);
+  window.print();
+}
+
+function setStatus(x,error=false){
+  const el=document.getElementById('status');
+  el.textContent=x;
+  el.style.color=error?'#d93025':'#188038';
+}
+
+async function copyForWord(){
+  if(!preview.innerText.trim()){setStatus('Nothing to copy.');return;}
+  if(window.MathJax && MathJax.typesetPromise)try{await MathJax.typesetPromise([preview]);}catch(e){}
+
+  // Copy semantic content, not the preview's fixed-size paper/page wrappers.
+  // Those wrappers have overflow:hidden and can clip wide tables when pasted into Word.
+  const root=document.createElement('div');
+  root.style.cssText='font-family:Arial,Helvetica,sans-serif;color:#202124;font-size:'+currentTextSize+'pt;line-height:'+currentSpacing+';';
+  const pages=Array.from(preview.querySelectorAll('.page'));
+  const columns=pages.length ? pages.flatMap(p=>Array.from(p.querySelectorAll(':scope > .page-column'))) : [preview];
+  for(const col of columns){
+    for(const original of Array.from(col.children)){
+      const el=original.cloneNode(true);
+      // Remove preview geometry that does not belong in a Word document.
+      el.style.removeProperty('position');
+      el.style.removeProperty('max-width');
+      el.style.removeProperty('overflow');
+      if(/^H[1-6]$/.test(el.tagName)){
+        el.style.fontFamily='Arial,Helvetica,sans-serif';
+        el.style.fontSize=el.tagName==='H1'?'16pt':el.tagName==='H2'?'13pt':currentTextSize+'pt';
+        el.style.fontWeight='700';el.style.margin='12pt 0 6pt';el.style.breakAfter='avoid';
+      } else if(el.tagName==='P'){
+        el.style.fontFamily='Arial,Helvetica,sans-serif';el.style.fontSize=currentTextSize+'pt';
+        el.style.lineHeight=String(currentSpacing);el.style.margin='0 0 7pt';
+      }
+      for(const table of (el.matches('table')?[el]:Array.from(el.querySelectorAll('table')))){
+        table.removeAttribute('width');
+        table.style.cssText='width:100%;max-width:100%;table-layout:auto;border-collapse:collapse;margin:8pt 0;';
+        for(const cell of table.querySelectorAll('th,td')){
+          cell.removeAttribute('width');cell.style.width='auto';cell.style.maxWidth='';
+          cell.style.whiteSpace='normal';cell.style.overflowWrap='break-word';cell.style.wordBreak='normal';
+          cell.style.border='1px solid #aeb4ba';cell.style.padding='4pt 5pt';cell.style.verticalAlign='top';
+          cell.style.fontFamily='Arial,Helvetica,sans-serif';cell.style.fontSize=Math.min(currentTextSize,10)+'pt';
+          if(cell.tagName==='TH'){cell.style.backgroundColor='#f1f3f4';cell.style.fontWeight='bold';}
+        }
+      }
+      for(const img of el.querySelectorAll('img')){img.style.maxWidth='100%';img.style.height='auto';}
+      for(const math of el.querySelectorAll('.math-display')){math.style.overflow='visible';math.style.maxWidth='100%';math.style.textAlign='center';}
+      root.appendChild(el);
+    }
+  }
+  const styles=`<meta charset="utf-8"><style>body{font-family:Arial,sans-serif;color:#202124;font-size:${currentTextSize}pt;line-height:${currentSpacing}}table{width:100%;max-width:100%;table-layout:auto;border-collapse:collapse}th,td{border:1px solid #aeb4ba;padding:4pt 5pt;vertical-align:top;white-space:normal;overflow-wrap:break-word}p{orphans:2;widows:2}img{max-width:100%;height:auto}</style>`;
+  const html='<!DOCTYPE html><html><head>'+styles+'</head><body>'+root.innerHTML+'</body></html>';
+  const plain=root.innerText;
+  let ok=false;
+  try{
+    if(navigator.clipboard && window.ClipboardItem && navigator.clipboard.write){
+      const item=new ClipboardItem({
+        'text/html':new Blob([html],{type:'text/html'}),
+        'text/plain':new Blob([plain],{type:'text/plain'})
+      });
+      await navigator.clipboard.write([item]);ok=true;
+    }
+  }catch(e){console.warn('Rich clipboard API unavailable; using selection copy.',e);}
+  if(!ok){
+    const box=document.createElement('div');box.contentEditable='true';
+    box.style.position='fixed';box.style.left='-10000px';box.style.top='0';box.style.width='700px';
+    box.innerHTML=root.innerHTML;document.body.appendChild(box);
+    const range=document.createRange();range.selectNodeContents(box);
+    const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);
+    try{ok=document.execCommand('copy');}catch(e){}
+    selection.removeAllRanges();box.remove();
+  }
+  setStatus(ok?'Copied Word-friendly content. Tables use the available page width.':'Copy was blocked by this browser. Use Download Word for a formatted .docx file.',!ok);
+}
+
+
+function dataUrlToArrayBuffer(dataUrl){
+  const b64=dataUrl.split(',')[1];
+  const bin=atob(b64),bytes=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+  return bytes.buffer;
+}
+
+async function svgToPngData(svg){
+  const clone=svg.cloneNode(true);
+  clone.setAttribute('xmlns','http://www.w3.org/2000/svg');
+  const xml=new XMLSerializer().serializeToString(clone);
+  const blob=new Blob([xml],{type:'image/svg+xml;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  return await new Promise((resolve,reject)=>{
+    const img=new Image();
+    img.onload=()=>{
+      const w=Math.max(10,Math.ceil(svg.getBoundingClientRect().width||300));
+      const h=Math.max(10,Math.ceil(svg.getBoundingClientRect().height||60));
+      const c=document.createElement('canvas');c.width=w*2;c.height=h*2;
+      const ctx=c.getContext('2d');ctx.fillStyle='white';ctx.fillRect(0,0,c.width,c.height);
+      ctx.drawImage(img,0,0,c.width,c.height);URL.revokeObjectURL(url);
+      resolve(c.toDataURL('image/png'));
+    };
+    img.onerror=reject;img.src=url;
+  });
+}
+
+function xmlEscape(s){
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');
+}
+
+function pxToTwip(px){ return Math.round(px * 1440 / 96); }
+function inchToTwip(inch){ return Math.round(inch * 1440); }
+
+function runXml(text, opts={}){
+  if(!text) return '';
+  let rPr='';
+  if(opts.bold) rPr+='<w:b/>';
+  if(opts.italic) rPr+='<w:i/>';
+  if(opts.underline) rPr+='<w:u w:val="single"/>';
+  if(opts.strike) rPr+='<w:strike/>';
+  if(opts.size) rPr+=`<w:sz w:val="${Math.round(opts.size*2)}"/><w:szCs w:val="${Math.round(opts.size*2)}"/>`;
+  if(opts.font) rPr+=`<w:rFonts w:ascii="${xmlEscape(opts.font)}" w:hAnsi="${xmlEscape(opts.font)}"/>`;
+  const parts=String(text).split(/\n/);
+  return parts.map((part,i)=>`<w:r>${rPr?`<w:rPr>${rPr}</w:rPr>`:''}<w:t xml:space="preserve">${xmlEscape(part)}</w:t></w:r>${i<parts.length-1?'<w:br/>':''}`).join('');
+}
+
+function domInlineXml(node, opts={}){
+  if(node.nodeType===Node.TEXT_NODE) return runXml(node.nodeValue,opts);
+  if(node.nodeType!==Node.ELEMENT_NODE) return '';
+  const tag=node.tagName.toLowerCase();
+  if(tag==='br') return '<w:r><w:br/></w:r>';
+  if(tag==='img') return imageXmlForElement(node);
+  const next={...opts};
+  if(tag==='strong' || tag==='b') next.bold=true;
+  if(tag==='em' || tag==='i') next.italic=true;
+  if(tag==='u') next.underline=true;
+  if(tag==='del' || tag==='s') next.strike=true;
+  if(tag==='code') next.font='Consolas';
+  if(node.classList.contains('math-inline')) return imageXmlForElement(node.querySelector('img'));
+  return Array.from(node.childNodes).map(n=>domInlineXml(n,next)).join('');
+}
+
+const wordMedia=[];
+function imageXmlForElement(img){
+  if(!img || !img.src) return '';
+  const rid='rIdMedia'+(wordMedia.length+1);
+  wordMedia.push({rid,src:img.src});
+  const w=img.naturalWidth||Math.round((img.getBoundingClientRect().width||180)*2);
+  const h=img.naturalHeight||Math.round((img.getBoundingClientRect().height||50)*2);
+  const maxW=inchToTwip(5.9);
+  const ratio=h? w/h : 3;
+  const cx=Math.min(maxW, Math.max(1000, pxToTwip(w)));
+  const cy=Math.max(400, Math.round(cx/ratio));
+  return `<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx*635}" cy="${cy*635}"/><wp:docPr id="${100+wordMedia.length}" name="Equation ${wordMedia.length}"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="0" name="Equation"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${rid}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx*635}" cy="${cy*635}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>`;
+}
+
+function paragraphXml(el, extraPPr=''){
+  const cls=el.className||'';
+  let pPr=extraPPr;
+  if(el.tagName.toLowerCase()==='h1') pPr+='<w:keepNext/>';
+  if(el.tagName.toLowerCase()==='h2' || el.tagName.toLowerCase()==='h3') pPr+='<w:keepNext/>';
+  const styleMap={h1:'Heading1',h2:'Heading2',h3:'Heading3',h4:'Heading4',h5:'Heading5',h6:'Heading6'};
+  const style=styleMap[el.tagName.toLowerCase()];
+  if(style) pPr+=`<w:pStyle w:val="${style}"/>`;
+  if(cls.includes('math-display')) pPr+='<w:jc w:val="center"/>';
+  if(el.tagName.toLowerCase()==='blockquote') pPr+='<w:pBdr><w:left w:val="single" w:sz="12" w:space="8" w:color="999999"/></w:pBdr><w:ind w:left="180"/>';
+  return `<w:p>${pPr?`<w:pPr>${pPr}</w:pPr>`:''}${Array.from(el.childNodes).map(n=>domInlineXml(n,{size:currentTextSize})).join('')}</w:p>`;
+}
+
+function listXml(el, num){
+  const items=Array.from(el.children).filter(x=>x.tagName.toLowerCase()==='li');
+  return items.map(li=>`<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="${num}"/></w:numPr></w:pPr>${Array.from(li.childNodes).map(n=>domInlineXml(n,{size:currentTextSize})).join('')}</w:p>`).join('');
+}
+
+function tableXml(table){
+  const rows=Array.from(table.querySelectorAll('tr'));
+  return `<w:tbl><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:color="AEB4BA"/><w:left w:val="single" w:sz="4" w:color="AEB4BA"/><w:bottom w:val="single" w:sz="4" w:color="AEB4BA"/><w:right w:val="single" w:sz="4" w:color="AEB4BA"/><w:insideH w:val="single" w:sz="4" w:color="AEB4BA"/><w:insideV w:val="single" w:sz="4" w:color="AEB4BA"/></w:tblBorders><w:tblW w:w="0" w:type="auto"/></w:tblPr>${rows.map(row=>`<w:tr>${Array.from(row.children).map(cell=>`<w:tc><w:tcPr><w:tcW w:w="0" w:type="auto"/></w:tcPr><w:p>${Array.from(cell.childNodes).map(n=>domInlineXml(n,{bold:cell.tagName.toLowerCase()==='th',size:9.5})).join('')}</w:p></w:tc>`).join('')}</w:tr>`).join('')}</w:tbl>`;
+}
+
+function dataUrlToUint8Array(dataUrl){
+  const base64 = dataUrl.split(',')[1] || '';
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for(let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
+  return bytes;
+}
+
+function docxImageRun(img){
+  if(!img || !img.src) return null;
+  const naturalW = img.naturalWidth || img.width || 300;
+  const naturalH = img.naturalHeight || img.height || 80;
+  const maxWidthPx = Math.max(120, Math.floor((getPaper().twW - 2016 - (currentColumns-1)*720) / currentColumns * 96 / 1440));
+  const width = Math.min(naturalW, maxWidthPx);
+  const height = Math.max(20, Math.round(naturalH * width / naturalW));
+  return new docx.ImageRun({
+    data: dataUrlToUint8Array(img.src),
+    transformation: { width, height },
+    altText: 'Equation'
+  });
+}
+
+function inlineDocxRuns(node, opts={}){
+  const D=window.docx;
+  if(node.nodeType===Node.TEXT_NODE){
+    const text=node.nodeValue || '';
+    if(!text) return [];
+    const pieces=text.split('\n');
+    const out=[];
+    pieces.forEach((part,i)=>{
+      if(part) out.push(new D.TextRun({
+        text:part,
+        bold:!!opts.bold,
+        italics:!!opts.italic,
+        underline:opts.underline ? {} : undefined,
+        strike:!!opts.strike,
+        font:opts.font || 'Arial',
+        size:Math.round((opts.size || currentTextSize)*2)
+      }));
+      if(i<pieces.length-1) out.push(new D.TextRun({break:1}));
+    });
+    return out;
+  }
+  if(node.nodeType!==Node.ELEMENT_NODE) return [];
+  const tag=node.tagName.toLowerCase();
+  if(tag==='br') return [new D.TextRun({break:1})];
+  if(tag==='img'){
+    const run=docxImageRun(node);
+    return run?[run]:[];
+  }
+  if(node.classList && node.classList.contains('math-inline')){
+    const run=docxImageRun(node.querySelector('img'));
+    return run?[run]:[];
+  }
+  const next={...opts};
+  if(tag==='strong' || tag==='b') next.bold=true;
+  if(tag==='em' || tag==='i') next.italic=true;
+  if(tag==='u') next.underline=true;
+  if(tag==='del' || tag==='s') next.strike=true;
+  if(tag==='code') next.font='Consolas';
+  let out=[];
+  node.childNodes.forEach(child=>{ out=out.concat(inlineDocxRuns(child,next)); });
+  return out;
+}
+
+function paragraphToDocx(el){
+  const D=window.docx;
+  const tag=el.tagName.toLowerCase();
+  const isMath=el.classList && el.classList.contains('math-display');
+  let children=[];
+  if(isMath){
+    const run=docxImageRun(el.querySelector('img'));
+    if(run) children=[run];
+  }else{
+    el.childNodes.forEach(n=>{ children=children.concat(inlineDocxRuns(n,{size:currentTextSize})); });
+  }
+  if(!children.length) children=[new D.TextRun({text:'',size:Math.round(currentTextSize*2)})];
+
+  let size=currentTextSize;
+  let bold=false;
+  let before=0, after=0;
+  if(/^h1$/.test(tag)){size=currentTextSize+4;bold=true;before=0;after=100;}
+  else if(/^h2$/.test(tag)){size=currentTextSize+3;bold=true;before=100;after=70;}
+  else if(/^h3$/.test(tag)){size=currentTextSize+2;bold=true;before=80;after=50;}
+  else if(/^h[456]$/.test(tag)){size=currentTextSize+1;bold=true;before=60;after=40;}
+  if(bold && !isMath){
+    // Rebuild runs so heading emphasis remains obvious without becoming oversized.
+    children=[];
+    el.childNodes.forEach(n=>{ children=children.concat(inlineDocxRuns(n,{size,bold:true})); });
+  }
+  if(isMath){
+    return new D.Paragraph({children,alignment:D.AlignmentType.CENTER,spacing:{before:40,after:40,line:Math.round(currentSpacing*240)}});
+  }
+  const pOpts={children,spacing:{before,after,line:Math.round(currentSpacing*240),lineRule:D.LineRuleType.AUTO},widowControl:true};
+  if(tag==='blockquote') pOpts.indent={left:240};
+  return new D.Paragraph(pOpts);
+}
+
+function listToDocx(el, ordered=false){
+  const D=window.docx;
+  const start=parseInt(el.getAttribute('start')||'1',10)||1;
+  return Array.from(el.children).filter(x=>x.tagName.toLowerCase()==='li').map((li,i)=>{
+    let runs=[];
+    li.childNodes.forEach(n=>{runs=runs.concat(inlineDocxRuns(n,{size:currentTextSize}));});
+    const prefix=new D.TextRun({text:ordered?`${start+i}. `:'• ',size:Math.round(currentTextSize*2)});
+    return new D.Paragraph({children:[prefix,...runs],indent:{left:360,hanging:180},spacing:{line:Math.round(currentSpacing*240),lineRule:D.LineRuleType.AUTO,after:0}});
+  });
+}
+
+function tableToDocx(table){
+  const D=window.docx;
+  const rows=Array.from(table.querySelectorAll('tr')).map(row=>{
+    const cells=Array.from(row.children).map(cell=>{
+      let runs=[];
+      cell.childNodes.forEach(n=>{runs=runs.concat(inlineDocxRuns(n,{size:Math.min(currentTextSize,10),bold:cell.tagName.toLowerCase()==='th'}));});
+      if(!runs.length) runs=[new D.TextRun({text:'',size:Math.round(Math.min(currentTextSize,10)*2)})];
+      return new D.TableCell({children:[new D.Paragraph({children:runs,spacing:{line:Math.round(currentSpacing*240),lineRule:D.LineRuleType.AUTO,after:0}})]});
+    });
+    return new D.TableRow({children:cells});
+  });
+  return new D.Table({rows,width:{size:100,type:D.WidthType.PERCENTAGE},borders:{top:{style:D.BorderStyle.SINGLE,size:4,color:'AEB4BA'},bottom:{style:D.BorderStyle.SINGLE,size:4,color:'AEB4BA'},left:{style:D.BorderStyle.SINGLE,size:4,color:'AEB4BA'},right:{style:D.BorderStyle.SINGLE,size:4,color:'AEB4BA'},insideHorizontal:{style:D.BorderStyle.SINGLE,size:4,color:'AEB4BA'},insideVertical:{style:D.BorderStyle.SINGLE,size:4,color:'AEB4BA'}}});
+}
+
+async function downloadWord(){
+  if(!preview.innerText.trim()){setStatus('Nothing to export.');return;}
+  setStatus('Preparing Word file...');
+  try{
+    if(!window.docx) throw new Error('The Word document engine did not load. Reopen the converter while connected to the internet.');
+    if(window.MathJax && MathJax.typesetPromise) await MathJax.typesetPromise([preview]);
+
+    // Convert MathJax SVG equations to PNGs in a temporary copy so Word receives
+    // ordinary embedded images rather than unsupported SVG markup.
+    const oldHTML=preview.innerHTML;
+    const svgs=Array.from(preview.querySelectorAll('.math-display svg,.math-inline svg'));
+    for(const svg of svgs){
+      try{
+        const png=await svgToPngData(svg);
+        const img=document.createElement('img');
+        img.src=png; img.alt='Equation'; img.style.maxWidth='100%';
+        svg.parentNode.replaceWith(img);
+      }catch(e){ console.warn('Equation conversion failed',e); }
+    }
+
+    const D=window.docx;
+    const children=[];
+    // Read the logical document order from the preview. We intentionally do not
+    // export the preview's artificial page containers as page breaks. Word itself
+    // handles pagination and columns, which avoids blank/black pages and produces
+    // the same left-column -> right-column -> next-page flow as Word.
+    const pages=Array.from(preview.querySelectorAll('.page'));
+    const source=pages.length ? pages.flatMap(p=>Array.from(p.querySelectorAll(':scope > .page-column'))) : [preview];
+    for(const col of source){
+      for(const el of Array.from(col.children || [])){
+        const tag=el.tagName.toLowerCase();
+        if(tag==='table') children.push(tableToDocx(el));
+        else if(tag==='ul') children.push(...listToDocx(el,false));
+        else if(tag==='ol') children.push(...listToDocx(el,true));
+        else if(['p','h1','h2','h3','h4','h5','h6','blockquote'].includes(tag)) children.push(paragraphToDocx(el));
+        else if(tag==='hr') children.push(new D.Paragraph({border:{bottom:{style:D.BorderStyle.SINGLE,size:4,color:'D9DDE3'}},spacing:{after:100,line:Math.round(currentSpacing*240)}}));
+        else children.push(paragraphToDocx(el));
+      }
+    }
+    if(!children.length) children.push(new D.Paragraph({children:[new D.TextRun({text:'',size:Math.round(currentTextSize*2)})]}));
+
+    const paper=getPaper();
+    const margins={top:936,right:1008,bottom:936,left:1008};
+    const doc=new D.Document({
+      creator:'AI Markdown to Word Converter',
+      title:'AI Markdown Document',
+      sections:[{
+        properties:{
+          page:{size:{width:paper.twW,height:paper.twH},margin:margins},
+          column:{count:Math.max(1,currentColumns),space:720,equalWidth:true}
+        },
+        children
+      }]
+    });
+    const blob=await D.Packer.toBlob(doc);
+    preview.innerHTML=oldHTML;
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;
+    a.download=`AI_Markdown_${currentColumns}Column_Document.docx`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),5000);
+    setStatus('Word document downloaded successfully.');
+  }catch(err){
+    console.error(err);
+    setStatus('Word export failed: '+(err.message||err),true);
+    alert('Word export failed.\n\n'+(err.message||err));
+  }
+}
+
+md.addEventListener('input',()=>{
+  clearTimeout(debounceTimer);
+  debounceTimer=setTimeout(convertMarkdown,300);
+});
+function startConverter(){
+  convertMarkdown();
+  if(typeof window.htmlDocx==='undefined'){
+    setStatus('Preview converter ready. Word export library is loading...',false);
+  }
+}
+if(document.readyState==='loading'){
+  document.addEventListener('DOMContentLoaded',startConverter);
+}else{
+  startConverter();
+}
+</script>
+</body>
+</html>
