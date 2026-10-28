@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AI Markdown → Word Converter v37</title>
+<title>AI Markdown → Word Converter v40</title>
 
 <!-- MathJax renders LaTeX equations in the preview. -->
 <script>
@@ -120,7 +120,7 @@ textarea{
 
 <body>
 <div class="topbar">
-  <strong>AI Markdown → Word v36</strong>
+  <strong>AI Markdown → Word v40</strong>
   <button onclick="convertMarkdown()">Convert</button>
   <button class="green" onclick="downloadWord()">Download Word</button>
   <button class="secondary" onclick="copyForWord()">Copy for Word</button>
@@ -236,94 +236,213 @@ function decodeCopiedEntities(s){
 }
 
 function normalizeMath(s){
-  // Normalize 2+ copied backslashes before OUTER math delimiters only. Do not
-  // collapse backslashes generally: inside TeX, \\ can separate matrix rows.
-  const bs=String.fromCharCode(92);
-  return String(s).replace(/\\{2,}([\[\]\(\)])/g,(_,d)=>bs+d);
+  // ChatGPT clipboard variants may double-escape only the outer delimiters.
+  // Normalize those delimiters, but do not touch general backslash runs here:
+  // TeX uses \\ as a matrix/aligned row separator.
+  return String(s).replace(/\\{2,}([\[\]()])/g, (_, d) => '\\' + d);
+}
+
+function normalizeMatrixBody(body){
+  // Matrix rows are the one place where adjacent backslashes have structural
+  // meaning. Normalize them before cleaning escaped commands elsewhere.
+  const knownCommands = new Set([
+    'frac','dfrac','tfrac','sqrt','boxed','text','mathrm','mathbf','mathit','mathbb',
+    'operatorname','overline','underline','left','right','begin','end','sin','cos','tan',
+    'cot','sec','csc','sinh','cosh','tanh','coth','sech','csch','ln','log','exp','lim',
+    'infty','pi','theta','alpha','beta','gamma','delta','Delta','cdot','times','leq',
+    'geq','neq','approx','pm','mp','partial','nabla','quad','qquad','to','mapsto','det',
+    'min','max','sum','int','ell','phi','omega','mu','nu','rho','sigma','tau','lambda'
+  ]);
+  let out='';
+  for(let i=0;i<body.length;){
+    if(body[i] !== '\\'){ out += body[i++]; continue; }
+    let j=i;
+    while(j<body.length && body[j]==='\\') j++;
+    const count=j-i;
+    const rest=body.slice(j);
+    const word=(rest.match(/^([A-Za-z]+)/)||[])[1]||'';
+    const previous=out.trimEnd().slice(-1);
+
+    if(word && knownCommands.has(word)){
+      if(count>=3){
+        // A row separator followed by a TeX command is three slashes:
+        // \\ + \\command. Preserve the row break and the command slash.
+        out += '\\\\\\';
+      }else{
+        // One slash is a normal command; two slashes before the command are
+        // a double-escaped command (a real row break would need three).
+        out += '\\';
+      }
+      i=j; continue;
+    }
+
+    if(/^\s*[+-]?(?:\d|\.\d)/.test(rest)){
+      // In a matrix environment, a slash followed by a numeric cell is a
+      // damaged row separator. Collapse any extra slashes to exactly two.
+      out += '\\\\';
+      i=j; continue;
+    }
+
+    if(count>=3){
+      // Extra slash before a plain cell entry, e.g. \\\4 => \\4.
+      out += '\\\\';
+      i=j; continue;
+    }
+    if(count===2){
+      // Already a valid row break (or doubled unknown command, which is safer
+      // to keep than to guess at and damage a matrix).
+      out += '\\\\';
+      i=j; continue;
+    }
+
+    // A flattened matrix sometimes has one slash before a single-letter cell
+    // instead of a proper row break, e.g. ...0\x&y. Repair only where the next
+    // token is a plain cell followed by a column separator/end, and the prior
+    // cell looks complete. Known TeX commands above are never changed.
+    const singleCell=rest.match(/^([A-Za-z])(?=\s*(?:&|$))/);
+    if(singleCell && previous && /[0-9}\])]/.test(previous)){
+      out += '\\\\';
+      i=j; continue;
+    }
+
+    out += '\\';
+    i=j;
+  }
+  return out;
 }
 
 function normalizeTex(tex){
-  // Normalize a single protected formula. If an environment is present, save
-  // its row breaks before cleaning escape artefacts from the rest of the TeX.
-  const envRe=/\\begin\{(matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|smallmatrix|aligned|align|cases|array|gathered|split)\}([\s\S]*?)\\end\{\1\}/g;
-  const rows=[];
-  tex=String(tex).replace(envRe,(whole,name,body)=>{
-    // iOS/clipboard occasionally adds a third slash before a row's first token.
-    body=body.replace(/\\\\\\(?=\s*(?:[-+]?\d|[A-Za-z]))/g,'\\\\');
-    body=body.replace(/\\\\/g,()=>{const id=rows.length;rows.push('\\\\');return `@@TEXROW${id}@@`;});
-    return `\\begin{${name}}${body}\\end{${name}}`;
-  });
-  // TeX has no meaning for a pasted display opener \\[ inside \boxed{...};
-  // it is intended to be an ordinary square bracket in this iOS-copy pattern.
-  tex=tex.replace(/\\boxed\{\s*\\\[/g,'\\boxed{[');
-  tex=tex.replace(/\\\](?=\s*\})/g,']');
-  // In iOS copied plain text, commands can be double-escaped while underscores
-  // may separately have a Markdown escape. Collapse repeated slashes only after
-  // preserving row separators and only within math content.
-  tex=tex.replace(/\\{2,}/g,'\\');
-  // Repair iOS flattening that drops the delimiter after \left or \right.
-  const bsChar=String.fromCharCode(92);
-  tex=tex.replace(/\\left[\\](?=(?:ln|frac|dfrac|tfrac|sqrt|mathrm|text|sin|cos|tan|sinh|cosh|tanh|coth|sech|csch|log|exp))/g,()=>bsChar+'left('+bsChar);
-  tex=tex.replace(/\\left(?=[0-9])/g,'\\left[');
-  // Preserve valid invisible delimiters such as \right.; do not rewrite them as brackets.
-  tex=tex.replace(/\\(?=\s*[<>=])/g,'');
-  tex=tex.replace(/\\([0-9])/g,'$1');
-  // Markdown-escaped underscores inside math become normal TeX subscripts.
-  tex=tex.replace(/\\_/g,'_');
-  // Repair common duplicate-subscript forms (for example H_f^\circ_{\mathrm{rxn}})
-  // without rewriting already-correct forms like H_2O, t_{1/2}, or [A]_t.
-  tex=tex.replace(/([A-Za-z])_([A-Za-z0-9]+)\^\{([^{}]+)\}_\{\\mathrm\{([^{}]+)\}\}/g, '$1_{$2,\\mathrm{$4}}^{$3}');
-  tex=tex.replace(/([A-Za-z])_\{([^{}]+)\}\^\{([^{}]+)\}_\{([^{}]+)\}/g, '$1_{$2,$4}^{$3}');
-  tex=tex.replace(/([A-Za-z])_([A-Za-z0-9]+)(\^\{[^{}]+\})_\{([^{}]+)\}/g, '$1_{$2,$4}$3');
-  tex=tex.replace(/([A-Za-z])_([A-Za-z0-9]+)(\^[A-Za-z0-9])_\{([^{}]+)\}/g, '$1_{$2,$4}$3');
-  tex=tex.replace(/([A-Za-z\]\)])_([A-Za-z0-9]+)_([A-Za-z0-9]+)/g, '$1_{$2,$3}');
-  // Repair malformed scalable delimiters commonly damaged by iOS clipboard copy.
-  // For example, `\\left\\[...\\right\\]^n` should use real square delimiters,
-  // while `\\left\\frac...\\right` has lost its opening/closing delimiter.
-  tex=tex.replace(/\\left\\\\\[/g,'\\left[').replace(/\\right\\\\\]/g,'\\right]');
-  tex=tex.replace(/\\left(?=\s*\\(?:frac|dfrac|tfrac|ln|log|sin|cos|tan|sinh|cosh|tanh|coth|sech|csch|sqrt|lim|sum|int|mathrm|text|operatorname|begin)\b)/g,'\\left(');
-  tex=tex.replace(/\\right(?=\s*$)/g,'\\right)');
-  // If left/right are unbalanced, drop only the sizing commands, preserving
-  // their actual brackets and expression instead of showing a MathJax warning.
-  const leftCount=(tex.match(/\\left\b/g)||[]).length;
-  const rightCount=(tex.match(/\\right\b/g)||[]).length;
-  if(leftCount!==rightCount) tex=tex.replace(/\\left\b|\\right\b/g,'');
+  let s=String(tex);
+  // Normalize a doubled environment command before extracting environments.
+  // Negative lookbehind matters: it must not consume the command slash in a
+  // valid row-break-plus-command sequence such as \\\frac.
+  s=s.replace(/(?<!\\)\\\\(?=begin\{(?:matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|smallmatrix|aligned|align|cases|array|gathered|split)\})/g,'\\');
 
-  // Check fraction commands for missing arguments. Compact forms such as \\frac3x
-  // are valid TeX, so accept braced groups, one-character tokens, or commands.
-  const fracCommands=[...tex.matchAll(/\\(dfrac|tfrac|frac)\b/g)].reverse();
+  const blocks=[];
+  const envRe=/\\begin\{(matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|smallmatrix|aligned|align|cases|array|gathered|split)\}([\s\S]*?)\\end\{\1\}/g;
+  s=s.replace(envRe,(whole,name,body)=>{
+    const id=blocks.length;
+    blocks.push('\\begin{'+name+'}'+normalizeMatrixBody(body)+'\\end{'+name+'}');
+    return '@@ENVBLOCK'+id+'@@';
+  });
+
+  // Outside matrix-like environments, doubled commands are clipboard escaping,
+  // not row separators. Collapse only an exact pair, or an overlong run, before
+  // a command name. A three-slash rowbreak + command cannot match the exact-pair
+  // rule because the following character is another slash.
+  s=s.replace(/(?<!\\)\\\\(?=[A-Za-z])/g,'\\');
+  s=s.replace(/(?<!\\)\\{3,}(?=[A-Za-z])/g,'\\');
+  s=s.replace(/@@ENVBLOCK(\d+)@@/g,(_,n)=>blocks[Number(n)]||'');
+
+  // A copied display opener inside \boxed is usually a literal bracket.
+  s=s.replace(/\\boxed\{\s*\\\[/g,'\\boxed{[');
+  s=s.replace(/\\\](?=\s*\})/g,']');
+  s=s.replace(/\\left\\\[/g,'\\left[').replace(/\\right\\\]/g,'\\right]');
+
+  // In math, the copied sequence \_ is usually an escaped subscript marker.
+  // Remove the escape slash, including when iOS doubled it.
+  s=s.replace(/\\+_/g,'_');
+
+  // Compact duplicate subscripts into one grouped subscript while retaining
+  // the original superscript ordering.
+  s=s.replace(/([A-Za-z])_([A-Za-z0-9]+)\^\{([^{}]+)\}_\{\\mathrm\{([^{}]+)\}\}/g, '$1_{$2,\\mathrm{$4}}^{$3}');
+  s=s.replace(/([A-Za-z])_\{([^{}]+)\}\^\{([^{}]+)\}_\{([^{}]+)\}/g, '$1_{$2,$4}^{$3}');
+  s=s.replace(/([A-Za-z])_([A-Za-z0-9]+)(\^\{[^{}]+\})_\{([^{}]+)\}/g, '$1_{$2,$4}$3');
+  s=s.replace(/([A-Za-z])_([A-Za-z0-9]+)(\^[A-Za-z0-9])_\{([^{}]+)\}/g, '$1_{$2,$4}$3');
+  s=s.replace(/([A-Za-z\]\)])_([A-Za-z0-9]+)_([A-Za-z0-9]+)/g, '$1_{$2,$3}');
+
+  // Repair incomplete \frac commands only when an argument is genuinely absent.
+  // Compact valid TeX such as \frac3x is allowed and is deliberately preserved.
+  const fracCommands=[...s.matchAll(/\\(dfrac|tfrac|frac)\b/g)].reverse();
   for(const m of fracCommands){
     const start=m.index, after=start+m[0].length;
     function argumentEnd(pos){
-      while(pos<tex.length && /\s/.test(tex[pos])) pos++;
-      if(pos>=tex.length) return -1;
-      if(tex[pos]==='{'){
+      while(pos<s.length && /\s/.test(s[pos])) pos++;
+      if(pos>=s.length) return -1;
+      if(s[pos]==='{'){
         let depth=0, escaped=false;
-        for(let k=pos;k<tex.length;k++){
-          if(tex[k]==='\\\\' && !escaped){escaped=true;continue;}
-          if(tex[k]==='{' && !escaped) depth++;
-          else if(tex[k]==='}' && !escaped){depth--;if(depth===0)return k+1;}
+        for(let k=pos;k<s.length;k++){
+          if(s[k]==='\\' && !escaped){escaped=true;continue;}
+          if(s[k]==='{' && !escaped) depth++;
+          else if(s[k]==='}' && !escaped){depth--;if(depth===0)return k+1;}
           escaped=false;
         }
         return -1;
       }
-      if(tex[pos]==='\\\\'){
-        let k=pos+1;
-        if(k>=tex.length)return -1;
-        if(/[A-Za-z]/.test(tex[k])){while(k<tex.length && /[A-Za-z]/.test(tex[k]))k++;return k;}
+      if(s[pos]==='\\'){
+        let k=pos+1;if(k>=s.length)return -1;
+        if(/[A-Za-z]/.test(s[k])){while(k<s.length && /[A-Za-z]/.test(s[k]))k++;return k;}
         return k+1;
       }
-      return /[A-Za-z0-9.+-]/.test(tex[pos]) ? pos+1 : -1;
+      return /[A-Za-z0-9.+-]/.test(s[pos]) ? pos+1 : -1;
     }
     const numeratorEnd=argumentEnd(after);
     const denominatorEnd=numeratorEnd<0 ? -1 : argumentEnd(numeratorEnd);
-    if(numeratorEnd<0 || denominatorEnd<0){
-      tex=tex.slice(0,start)+'\\operatorname{frac}'+tex.slice(after);
-    }
+    if(numeratorEnd<0 || denominatorEnd<0) s=s.slice(0,start)+'\\operatorname{frac}'+s.slice(after);
   }
-  // Restore the exact row-separator strings saved above.
-  tex=tex.replace(/@@TEXROW(\d+)@@/g,(_,n)=>rows[Number(n)]||'\\\\\\\\');
-  return tex;
+
+  // Balance scalable delimiters rather than deleting both commands. Invisible
+  // delimiters are valid TeX and avoid MathJax's “Missing \left or extra \right”.
+  const leftCount=(s.match(/\\left\b/g)||[]).length;
+  const rightCount=(s.match(/\\right\b/g)||[]).length;
+  if(leftCount>rightCount) s += ' \\right.'.repeat(leftCount-rightCount);
+  else if(rightCount>leftCount) s = ('\\left. ').repeat(rightCount-leftCount)+s;
+
+  // Restore already-normalized environments after processing non-environment
+  // escapes. This order prevents \frac after a matrix row break becoming frac.
+  return s;
+}
+
+function stripSingleTrailingContinuation(line){
+  // A lone trailing slash is a Markdown/clipboard continuation artifact. Keep
+  // real TeX row breaks (two or more slashes) intact.
+  return String(line).replace(/(?<!\\)\\[ \t]*$/,'');
+}
+
+function normalizeBrokenDisplayBlocks(source){
+  const lines=String(source).replace(/\r\n?/g,'\n').split('\n');
+  const out=[];
+  for(let i=0;i<lines.length;i++){
+    let line=normalizeMath(lines[i]);
+    const open=line.indexOf('\\[');
+    if(open<0){
+      // Some ChatGPT copies leave a line-continuation slash just before a
+      // display opener on the following line. Remove only that lone slash.
+      const next=i+1<lines.length?normalizeMath(lines[i+1]).trimStart():'';
+      if(next.startsWith('\\[')) line=stripSingleTrailingContinuation(line);
+      out.push(line); continue;
+    }
+    if(line.indexOf('\\]',open+2)>=0){
+      // Same-line display: normalize only a stray continuation immediately
+      // before the closing delimiter, not valid matrix row separators.
+      out.push(line.replace(/(?<!\\)\\(?=\s*\\\])/g,''));
+      continue;
+    }
+
+    let closeLine=-1,closeAt=-1;
+    for(let j=i+1;j<lines.length;j++){
+      const candidate=normalizeMath(lines[j]);
+      const k=candidate.indexOf('\\]');
+      if(k>=0){closeLine=j;closeAt=k;break;}
+    }
+    if(closeLine<0){out.push(line);continue;}
+
+    const prefix=stripSingleTrailingContinuation(line.slice(0,open)).trimEnd();
+    const openerRemainder=stripSingleTrailingContinuation(line.slice(open+2));
+    const pieces=[openerRemainder];
+    for(let j=i+1;j<closeLine;j++) pieces.push(stripSingleTrailingContinuation(normalizeMath(lines[j])));
+    const finalPart=stripSingleTrailingContinuation(normalizeMath(lines[closeLine]).slice(0,closeAt));
+    pieces.push(finalPart);
+    const suffix=stripSingleTrailingContinuation(normalizeMath(lines[closeLine]).slice(closeAt+2)).trim();
+    const displayBlock='\\['+pieces.join(' ')+'\\]';
+    const previousSourceLine=(i>0)?lines[i-1]:'';
+    const attachToNumberedItem=/^\s*\d+[.)]\s+/.test(out[out.length-1]||'') && /(?<!\\)\\\s*$/.test(previousSourceLine);
+    if(attachToNumberedItem){const prev=stripSingleTrailingContinuation(out.pop());out.push(prev+' '+displayBlock);}
+    else {if(prefix) out.push(prefix);out.push(displayBlock);}
+    if(suffix) out.push(suffix);
+    i=closeLine;
+  }
+  return out.join('\n');
 }
 
 function isIOSPlainTextCopy(source){
@@ -558,6 +677,7 @@ function texBraceBalance(text){
 function convertMarkdown(){
   try {
   let source=decodeCopiedEntities(md.value).replace(/^(\s*\d+)\\\.(?=\s)/gm,'$1.');
+  source=normalizeBrokenDisplayBlocks(source);
   plainIOSCopyMode=isIOSPlainTextCopy(source);
   if(plainIOSCopyMode) source=restoreIOSPlainText(source);
   const note=document.getElementById('compatNote');
@@ -589,6 +709,25 @@ function convertMarkdown(){
     if(!line.trim()){i++;continue;}
 
     let normalized=normalizeMath(line).trim();
+    // Render complete display equations as block elements, not as a div nested
+    // inside a paragraph. This also handles equations reassembled from broken
+    // multi-line clipboard delimiters by normalizeBrokenDisplayBlocks().
+    if(normalized.startsWith('\\[') && normalized.includes('\\]')){
+      const closeAt=normalized.indexOf('\\]',2);
+      const tex=normalizeTex(normalized.slice(2,closeAt).trim());
+      html+=`<div class="math-display">\\[${escapeHtml(tex)}\\]</div>`;
+      const suffix=normalized.slice(closeAt+2).trim();
+      if(suffix) html+=`<p>${inlineMarkdown(suffix)}</p>`;
+      i++;continue;
+    }
+    if(normalized.startsWith('$$') && normalized.indexOf('$$',2)>=0){
+      const closeAt=normalized.indexOf('$$',2);
+      const tex=normalizeTex(normalized.slice(2,closeAt).trim());
+      html+=`<div class="math-display">\\[${escapeHtml(tex)}\\]</div>`;
+      const suffix=normalized.slice(closeAt+2).trim();
+      if(suffix) html+=`<p>${inlineMarkdown(suffix)}</p>`;
+      i++;continue;
+    }
     // iOS clipboard text sometimes splits one LaTeX expression over several lines,
     // especially a \boxed{...} answer. Collect lines until the braces balance so
     // MathJax never receives a fragment like the bare command `\boxed{`.
@@ -606,11 +745,11 @@ function convertMarkdown(){
     // iOS copies often strip display delimiters around multiline cases/aligned/matrix
     // environments. Collect the entire environment before normalizing row breaks.
     let envLineIndex=i;
-    let envStart=normalized.match(/\\begin\{(cases|aligned|align|gathered|matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|array|split)\}/);
+    let envStart=normalized.match(/^\s*\\begin\{(cases|aligned|align|gathered|matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|array|split)\}/);
     let environmentPrefix='';
     // The iOS copy may put `f(x)=` on one line and its `\begin{cases}` on the next.
     if(!envStart && i+1<lines.length && /^(?:[A-Za-z][A-Za-z0-9_'()]*|[A-Za-z])\s*(?:=|:=)$/.test(normalized)){
-      const nextEnv=normalizeMath(lines[i+1]).trim().match(/\\begin\{(cases|aligned|align|gathered|matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|array|split)\}/);
+      const nextEnv=normalizeMath(lines[i+1]).trim().match(/^\s*\\begin\{(cases|aligned|align|gathered|matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|array|split)\}/);
       if(nextEnv){environmentPrefix=line.trim()+'\n';i++;line=lines[i];normalized=normalizeMath(line).trim();envStart=nextEnv;}
     }
     if(envStart){
